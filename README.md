@@ -908,3 +908,49 @@ difference between a single interpreter and five unrelated synthetic strangers.
 Qwen3-ASR first. STT is the sole remaining ceiling, with every downstream stage
 measured correct, so it is the larger win. Chatterbox improves a stage that
 already works and is not the constraint.
+
+## Secret scanning
+
+Two gates, because one of them cannot be relied on.
+
+**Pre-push hook**, `.githooks/pre-push`. Enable once per clone:
+
+```bash
+./tools/install_gitleaks.sh
+```
+
+That fetches the pinned gitleaks binary and sets `core.hooksPath`. The hook
+scans history before every push and refuses one that carries a credential.
+Bypass a single push with `--no-verify` when you are certain.
+
+This is the gate that matters. CI catches a secret AFTER it has reached
+GitHub, at which point it must be treated as compromised whatever happens next.
+The hook catches it while it is still only on your machine.
+
+**GitHub Actions**, `.github/workflows/secret-scan.yml`. Same binary, same
+version, same config, on every push and pull request.
+
+It runs the gitleaks binary rather than `gitleaks-action`, which requires a
+licence key for organisation-owned repositories. It verifies the download's
+SHA-256 before executing it: a security gate that runs an unverified binary is
+not a security gate.
+
+Both scan history with `detect`, never `--no-git`. The latter ignores
+.gitignore, and on a developer machine it walks the model weights and the Go
+module cache and reports 469 false hits.
+
+### Known false positive
+
+The LiveKit `devkey`/`secret` pair appears throughout the tooling. It is
+published by LiveKit for local development and is not a secret. Expect scanners
+to flag it.
+
+### When a scan fails
+
+Change the value, do not allowlist the file. An allowlist also hides a real
+secret that lands there later. The tests originally used a 32-character hex
+string as an HMAC key, which reads exactly like a credential; replacing it with
+an obviously synthetic phrase fixed the finding without weakening the scanner.
+
+If the value was real, rotate it first. Removing it in a new commit is not
+enough, because the old commit still carries it.
