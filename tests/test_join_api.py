@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from dataclasses import replace
 
 import pytest
 
@@ -247,3 +248,82 @@ async def test_listening_to_the_original_is_counted(env):
     client, store, config = env
     await client.post(f"/api/sessions/{config.session_id}/join", json={"language": "en"})
     assert (await store.active_listeners(config.session_id)).get("en") == 1
+
+
+# --- stable room URLs -------------------------------------------------------
+
+
+async def test_room_url_resolves_to_the_live_session(env):
+    """
+    The reason room URLs exist. A session id changes on every restart, so a QR
+    code printed against one dies the moment anything is redeployed. Codes go
+    on badges days before an event.
+    """
+    client, _store, config = env
+    r = await client.get(f"/api/rooms/{config.room_name}")
+    assert r.status_code == 200
+    assert r.json()["session_id"] == config.session_id
+
+
+async def test_room_url_survives_a_new_session_in_the_same_room(env):
+    """The printed code must keep working after a restart mints a new id."""
+    client, store, config = env
+    original = (await client.get(f"/api/rooms/{config.room_name}")).json()["session_id"]
+
+    await store.end_session(config.session_id)
+    replacement = replace(config, session_id=str(uuid.uuid4()))
+    await store.create_session(replacement, latency_credible=False)
+    await store.mark_live(replacement.session_id)
+
+    resolved = (await client.get(f"/api/rooms/{config.room_name}")).json()["session_id"]
+    assert resolved == replacement.session_id
+    assert resolved != original
+
+
+async def test_room_join_issues_a_token(env):
+    client, _store, config = env
+    body = (await client.post(
+        f"/api/rooms/{config.room_name}/join", json={"language": "fr"}
+    )).json()
+    assert body["track_name"] == "lang-fr"
+    assert body["token"]
+
+
+async def test_room_join_returns_the_session_id_for_the_leave_call(env):
+    """A page reached by room name never saw an id, and needs one to leave."""
+    client, _store, config = env
+    body = (await client.post(
+        f"/api/rooms/{config.room_name}/join", json={"language": "fr"}
+    )).json()
+    assert body["session_id"] == config.session_id
+
+
+async def test_room_speak_issues_a_publisher_token(env):
+    client, _store, config = env
+    body = (await client.post(f"/api/rooms/{config.room_name}/speak")).json()
+    assert body["track_name"] == "source-audio"
+
+
+async def test_an_empty_room_is_a_404_not_a_dead_page(env):
+    client, *_ = env
+    r = await client.get("/api/rooms/nothing-here")
+    assert r.status_code == 404
+    assert "no live session" in r.json()["detail"]
+
+
+async def test_both_room_pages_are_served(env):
+    client, _store, config = env
+    assert (await client.get(f"/room/{config.room_name}")).status_code == 200
+    assert (await client.get(f"/room/{config.room_name}/speak")).status_code == 200
+
+
+async def test_the_pages_target_the_right_api_for_each_url_shape(env):
+    """
+    join.js and speak.js derive the API path from the URL they were served at.
+    Getting this wrong makes a room page silently query a session that does not
+    exist.
+    """
+    client, *_ = env
+    js = (await client.get("/static/join.js")).text
+    assert '"/api/rooms/"' in js
+    assert '"/api/sessions/"' in js

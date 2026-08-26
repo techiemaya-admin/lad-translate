@@ -20,7 +20,19 @@
   "use strict";
 
   var LK = window.LivekitClient;
-  var sessionId = location.pathname.split("/").filter(Boolean).pop();
+  // The page is served at two URL shapes and must talk to the matching API:
+  //
+  //   /s/<session-id>      -> /api/sessions/<session-id>
+  //   /room/<room-name>    -> /api/rooms/<room-name>
+  //
+  // Room URLs are the ones that go on printed material: a session id changes
+  // on every restart, a room name does not.
+  function apiBase() {
+    var parts = location.pathname.split("/").filter(Boolean);
+    if (parts[0] === "room") return "/api/rooms/" + encodeURIComponent(parts[1]);
+    return "/api/sessions/" + encodeURIComponent(parts[parts.length - 1]);
+  }
+
 
   var el = {
     event: document.getElementById("event"),
@@ -44,6 +56,7 @@
   var wantedTrack = null;
   var info = null;
   var audioTimer = null;
+  var resolvedSession = "";
 
   // How long to wait for the chosen language's track before saying so.
   // A listener whose language is configured but not being published gets a
@@ -74,7 +87,7 @@
   function load() {
     show(null);
     el.subtitle.textContent = "Loading…";
-    fetch("/api/sessions/" + encodeURIComponent(sessionId))
+    fetch(apiBase())
       .then(function (r) {
         if (r.status === 404) throw new Error("This session was not found. Check the QR code.");
         if (r.status === 410) throw new Error("This session has ended.");
@@ -145,7 +158,7 @@
   }
 
   function connect(lang) {
-    return fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/join", {
+    return fetch(apiBase() + "/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ language: lang.code })
@@ -158,6 +171,9 @@
       .then(function (grant) {
         listenerId = grant.listener_id;
         wantedTrack = grant.track_name;
+        // Under a /room/ URL the page never saw a session id. The API resolves
+        // it, so keep what it returns for the leave call.
+        resolvedSession = grant.session_id || (info && info.session_id) || "";
 
         room = new LK.Room({
           // Nothing is published from a phone, so no capture defaults are set.
@@ -280,8 +296,9 @@
     // Beacon rather than fetch: a normal request is cancelled when the page
     // goes away. Best effort even so, so listener counts from this are a
     // floor rather than a census.
+    if (!resolvedSession) return;
     var url = "/api/listeners/" + encodeURIComponent(listenerId) +
-              "/leave?session_id=" + encodeURIComponent(sessionId);
+              "/leave?session_id=" + encodeURIComponent(resolvedSession);
     if (navigator.sendBeacon) navigator.sendBeacon(url, new Blob());
   }
 

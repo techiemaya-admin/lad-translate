@@ -1121,3 +1121,26 @@ directly rather than by trying to reproduce the audio that triggers it — none
 of the synthetic silence, hum or breath conditions I tried would reproduce it,
 because a phone in a real room carries far more speech-like structure than
 Gaussian noise does.
+
+## Stable room URLs
+
+A QR code printed against a session id dies the moment the service restarts.
+Codes go on badges and signage days before an event, so that is not a link.
+
+Room URLs resolve to whatever session is live in that room:
+
+    https://<host>:8443/room/demo-room          listen
+    https://<host>:8443/room/demo-room/speak    speak
+
+Restart the translator as often as you like; the printed code keeps working.
+The session-id URLs still exist and still work, and are the right choice when
+you deliberately want one specific session.
+
+`join.js` and `speak.js` derive their API path from the URL they were served
+at, so one page serves both shapes:
+
+    /s/<session-id>     ->  /api/sessions/<session-id>
+    /room/<room-name>   ->  /api/rooms/<room-name>
+
+The join response carries `session_id` because a page reached by room name
+never saw one, and needs it to report the listener leaving.

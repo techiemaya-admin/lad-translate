@@ -15,7 +15,19 @@
   "use strict";
 
   var LK = window.LivekitClient;
-  var sessionId = location.pathname.split("/").filter(Boolean).pop();
+  // The page is served at two URL shapes and must talk to the matching API:
+  //
+  //   /s/<session-id>      -> /api/sessions/<session-id>
+  //   /room/<room-name>    -> /api/rooms/<room-name>
+  //
+  // Room URLs are the ones that go on printed material: a session id changes
+  // on every restart, a room name does not.
+  function apiBase() {
+    var parts = location.pathname.split("/").filter(Boolean);
+    if (parts[0] === "room") return "/api/rooms/" + encodeURIComponent(parts[1]);
+    return "/api/sessions/" + encodeURIComponent(parts[parts.length - 1]);
+  }
+
 
   var el = {
     event: document.getElementById("event"),
@@ -71,7 +83,7 @@
       );
       return;
     }
-    fetch("/api/sessions/" + encodeURIComponent(sessionId))
+    fetch(apiBase())
       .then(function (r) {
         if (r.status === 404) throw new Error("Session not found. Check the link.");
         if (r.status === 410) throw new Error("This session has ended.");
@@ -121,7 +133,7 @@
     startMeter(mediaStream);
     status("Connecting…", "connecting");
 
-    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/speak", { method: "POST" })
+    fetch(apiBase() + "/speak", { method: "POST" })
       .then(function (r) {
         if (r.status === 409) throw new Error("Someone is already speaking in this session.");
         if (r.status === 410) throw new Error("This session has ended.");

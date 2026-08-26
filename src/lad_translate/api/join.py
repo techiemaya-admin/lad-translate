@@ -21,7 +21,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -134,6 +134,59 @@ def create_app(
 
     # -------------------------------------------------------------------------
 
+    async def _load_room(room_name: str):
+        """
+        Find the session currently live in a room.
+
+        The reason room URLs exist. A session id changes every time the service
+        restarts, so a QR code printed against one is dead the moment anything
+        is redeployed. Codes go on badges and signage days before an event, and
+        a link that only survives until the next restart is not a link.
+        """
+        if app.state.pool is None:
+            raise HTTPException(503, "database not configured")
+
+        tenants = await app.state.pool.fetch(
+            f"SELECT id::text, schema_name FROM {app.state.control_schema}.tenants "
+            "WHERE is_active"
+        )
+        for tenant_id, schema in [(r[0], r[1]) for r in tenants]:
+            context = TenantContext(
+                tenant_id=tenant_id,
+                database_url=os.getenv("LAD_DATABASE_URL", "unused"),
+                schema=schema,
+            )
+            store = SessionStore(app.state.pool, context)
+            for row in await store.live_sessions():
+                session = await store.get_session(row["session_id"])
+                if session is not None and session["room_name"] == room_name:
+                    return store, session
+        raise HTTPException(404, f"no live session in room {room_name!r}")
+
+    @app.get("/room/{room_name}")
+    async def room_listen_page(room_name: str):
+        """Stable listener URL. Survives restarts; a session id does not."""
+        return FileResponse(STATIC_DIR / "join.html")
+
+    @app.get("/room/{room_name}/speak")
+    async def room_speak_page(room_name: str):
+        return FileResponse(STATIC_DIR / "speak.html")
+
+    @app.get("/api/rooms/{room_name}")
+    async def room_info(room_name: str):
+        _store, session = await _load_room(room_name)
+        return await _describe(session)
+
+    @app.post("/api/rooms/{room_name}/join")
+    async def room_join(room_name: str, body: JoinRequest):
+        store, session = await _load_room(room_name)
+        return await _issue_listener(store, session, body.language)
+
+    @app.post("/api/rooms/{room_name}/speak")
+    async def room_speak(room_name: str):
+        _store, session = await _load_room(room_name)
+        return await _issue_speaker(session)
+
     @app.get("/healthz")
     async def healthz():
         return {"ok": True}
@@ -156,13 +209,10 @@ def create_app(
         """
         return FileResponse(STATIC_DIR / "speak.html")
 
-    @app.post("/api/sessions/{session_id}/speak")
-    async def speak(session_id: str):
-        """Issue a publish-only token for the speaker."""
+    async def _issue_speaker(session) -> dict:
+        """Publish-only token for the speaker. Shared by both URL shapes."""
         if app.state.issuer is None:
             raise HTTPException(503, "LiveKit not configured")
-
-        _store, session = await _load_session(session_id)
         if session["status"] not in ("starting", "live"):
             raise HTTPException(410, "this session has ended")
 
@@ -177,10 +227,11 @@ def create_app(
                     "source track is supported",
                 )
 
+        sid = session["session_id"]
         token = app.state.issuer.for_publisher(
-            session["room_name"], identity=f"speaker-{session_id[:8]}"
+            session["room_name"], identity=f"speaker-{sid[:8]}"
         )
-        log.info("speaker token issued", extra={"session_id": session_id})
+        log.info("speaker token issued", extra={"session_id": sid})
         return {
             "url": app.state.issuer.livekit_url,
             "token": token,
@@ -189,9 +240,13 @@ def create_app(
             "source_language": session["source_language"],
         }
 
-    @app.get("/api/sessions/{session_id}")
-    async def session_info(session_id: str):
+    @app.post("/api/sessions/{session_id}/speak")
+    async def speak(session_id: str):
         _store, session = await _load_session(session_id)
+        return await _issue_speaker(session)
+
+    async def _describe(session) -> dict:
+        """Language list with live availability. Shared by both URL shapes."""
         if session["status"] not in ("starting", "live"):
             raise HTTPException(410, "this session has ended")
 
@@ -208,7 +263,7 @@ def create_app(
             log.warning(
                 "configured languages are not being published",
                 extra={
-                    "session_id": session_id,
+                    "session_id": session["session_id"],
                     "missing": missing,
                     "publishing": sorted(live),
                 },
@@ -248,49 +303,62 @@ def create_app(
                 }
             )
         return {
-            "session_id": session_id,
+            "session_id": session["session_id"],
             "event_name": session["event_name"],
             "status": session["status"],
             "languages": languages,
         }
 
-    @app.post("/api/sessions/{session_id}/join")
-    async def join(session_id: str, body: JoinRequest, request: Request):
+    @app.get("/api/sessions/{session_id}")
+    async def session_info(session_id: str):
+        _store, session = await _load_session(session_id)
+        return await _describe(session)
+
+    async def _issue_listener(store, session, language: str) -> dict:
+        """
+        Register a listener and mint their token.
+
+        Shared by the session-id and room URL shapes so the two cannot drift.
+        """
         if app.state.issuer is None:
             raise HTTPException(503, "LiveKit not configured")
-
-        store, session = await _load_session(session_id)
         if session["status"] not in ("starting", "live"):
             raise HTTPException(410, "this session has ended")
-        is_source = body.language == session["source_language"]
-        if not is_source and body.language not in session["target_languages"]:
+
+        sid = session["session_id"]
+        is_source = language == session["source_language"]
+        if not is_source and language not in session["target_languages"]:
             offered = [session["source_language"], *session["target_languages"]]
             raise HTTPException(
-                400, f"{body.language!r} is not offered; available: {offered}"
+                400, f"{language!r} is not offered; available: {offered}"
             )
 
-        listener_id = await store.listener_joined(session_id, body.language)
+        listener_id = await store.listener_joined(sid, language)
         token = app.state.issuer.for_listener(
-            room=session["room_name"], language=body.language, listener_id=listener_id
+            room=session["room_name"], language=language, listener_id=listener_id
         )
         # The original is a different track, not lang-<code>.
-        track_name = SOURCE_TRACK_NAME if is_source else f"lang-{body.language}"
+        track_name = SOURCE_TRACK_NAME if is_source else f"lang-{language}"
         log.info(
             "listener joined",
-            extra={
-                "session_id": session_id,
-                "listener_id": listener_id,
-                "language": body.language,
-            },
+            extra={"session_id": sid, "listener_id": listener_id, "language": language},
         )
         return {
             "listener_id": listener_id,
-            "language": body.language,
+            # A page reached by room name never saw a session id, and needs
+            # this to report the listener leaving.
+            "session_id": sid,
+            "language": language,
             "url": token.url,
             "token": token.token,
             "track_name": track_name,
             "is_source": is_source,
         }
+
+    @app.post("/api/sessions/{session_id}/join")
+    async def join(session_id: str, body: JoinRequest):
+        store, session = await _load_session(session_id)
+        return await _issue_listener(store, session, body.language)
 
     @app.post("/api/listeners/{listener_id}/leave")
     async def leave(listener_id: str, session_id: str):
