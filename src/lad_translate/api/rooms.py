@@ -77,7 +77,8 @@ class RoomInspector:
                     elif track.name == SOURCE_TRACK_NAME:
                         published.add(SOURCE_TRACK_NAME)
             return published
-        except Exception:
+        except Exception:  # noqa: BLE001 - see the docstring: a failed
+            # inspection must not stop people joining a working room.
             log.warning("could not inspect room, assuming unknown", extra={"room": room})
             return set()
         finally:

@@ -6,11 +6,11 @@ from .stability import StabilityTracker
 from .types import ChunkerConfig, CommitReason, PhraseChunk
 
 __all__ = [
-    "PhraseChunker",
+    "BoundaryStrength",
     "ChunkerConfig",
     "CommitReason",
     "PhraseChunk",
+    "PhraseChunker",
     "StabilityTracker",
-    "BoundaryStrength",
     "find_boundary",
 ]

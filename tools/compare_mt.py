@@ -31,9 +31,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from lad_translate.adapters.base import VoiceSpec  # noqa: E402
-from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter  # noqa: E402
-from lad_translate.obs.log import configure  # noqa: E402
+from lad_translate.adapters.base import VoiceSpec
+from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter
+from lad_translate.obs.log import configure
 
 MODEL_ROOT = ROOT / "models" / "mt"
 

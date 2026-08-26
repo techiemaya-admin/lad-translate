@@ -47,6 +47,7 @@ import importlib.util
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 
@@ -126,7 +127,7 @@ class ChatterboxTtsAdapter(TtsAdapter):
     def supports(self, language: str) -> bool:
         return language in self.languages
 
-    async def __aenter__(self) -> ChatterboxTtsAdapter:
+    async def __aenter__(self) -> Self:
         started = time.monotonic()
 
         def load():

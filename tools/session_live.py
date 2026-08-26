@@ -36,20 +36,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from lad_translate.adapters.mt_routing import RoutingMtAdapter  # noqa: E402
-from lad_translate.adapters.stt_whisper import WhisperSttAdapter  # noqa: E402
-from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter  # noqa: E402
-from lad_translate.api.tokens import TokenIssuer  # noqa: E402
-from lad_translate.db.sessions import SessionStore  # noqa: E402
-from lad_translate.config import (  # noqa: E402
+from lad_translate.adapters.mt_routing import RoutingMtAdapter
+from lad_translate.adapters.stt_whisper import WhisperSttAdapter
+from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter
+from lad_translate.api.tokens import TokenIssuer
+from lad_translate.config import (
     LanguageTarget,
     SessionConfig,
     SessionLimits,
     TenantContext,
 )
-from lad_translate.obs.log import configure, get_logger  # noqa: E402
-from lad_translate.session.pipeline import TranslationSession  # noqa: E402
-from lad_translate.session.room import SOURCE_TRACK_NAME, TranslationRoom  # noqa: E402
+from lad_translate.db.sessions import SessionStore
+from lad_translate.obs.log import configure, get_logger
+from lad_translate.session.pipeline import TranslationSession
+from lad_translate.session.room import SOURCE_TRACK_NAME, TranslationRoom
 
 log = get_logger("session_live")
 FRAME_MS = 20
@@ -59,7 +59,7 @@ async def venue_publisher(
     url: str, token: str, audio: Path, done: asyncio.Event, loop: bool = False
 ) -> None:
     """Stream a WAV into the room at real speed, as the venue desk would."""
-    import livekit.rtc as rtc
+    from livekit import rtc
 
     room = rtc.Room()
     await room.connect(url, token)
@@ -101,18 +101,24 @@ async def venue_publisher(
 
 async def listener(url: str, token: str, language: str, out: Path, stop: asyncio.Event) -> float:
     """Subscribe to one language track and write what actually arrives."""
-    import livekit.rtc as rtc
+    from livekit import rtc
 
     room = rtc.Room()
     received: list[bytes] = []
     sample_rate = 0
     attached = asyncio.Event()
+    # Hold a reference. A task with no strong reference can be garbage
+    # collected while still running, which here would stop the listener
+    # receiving audio with nothing logged to say why.
+    drains: set[asyncio.Task] = set()
 
     @room.on("track_subscribed")
-    def _on(track, publication, participant):  # noqa: ANN001
+    def _on(track, publication, participant):
         if publication.name == f"lang-{language}":
             attached.set()
-            asyncio.create_task(_drain(track))
+            task = asyncio.create_task(_drain(track))
+            drains.add(task)
+            task.add_done_callback(drains.discard)
 
     async def _drain(track) -> None:
         nonlocal sample_rate
@@ -225,7 +231,7 @@ async def main() -> int:
             else:
                 await store.create_session(config, latency_credible=False)
                 print(f"created session {config.session_id} in {tenant.schema}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"not storing transcripts: {exc}")
             store = None
 

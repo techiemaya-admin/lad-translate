@@ -30,19 +30,19 @@ def test_arabic_and_devanagari_punctuation_is_recognised():
 
 
 def test_latest_boundary_wins_so_chunks_are_as_long_as_possible():
-    tokens = "first clause, second clause, third part".split()
+    tokens = ["first", "clause,", "second", "clause,", "third", "part"]
     end, strength = find_boundary(tokens, min_words=3)
     assert strength is BoundaryStrength.MEDIUM
-    assert tokens[:end] == "first clause, second clause,".split()
+    assert tokens[:end] == ["first", "clause,", "second", "clause,"]
 
 
 def test_boundary_below_min_words_is_rejected():
-    tokens = "yes, absolutely".split()
+    tokens = ["yes,", "absolutely"]
     assert find_boundary(tokens, min_words=4) == (0, BoundaryStrength.NONE)
 
 
 def test_weak_boundary_sits_before_the_conjunction():
-    tokens = "we looked at the numbers and they were encouraging".split()
+    tokens = ["we", "looked", "at", "the", "numbers", "and", "they", "were", "encouraging"]
     assert find_boundary(tokens, min_words=4, allow_weak=False)[0] == 0
     end, strength = find_boundary(tokens, min_words=4, allow_weak=True)
     assert strength is BoundaryStrength.WEAK

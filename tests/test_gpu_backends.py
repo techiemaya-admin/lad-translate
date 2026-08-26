@@ -15,7 +15,6 @@ import pytest
 from lad_translate.adapters.registry import STT_BACKENDS, TTS_BACKENDS, build_stt, build_tts
 from lad_translate.adapters.tts_chatterbox import SUPPORTED, supports_language
 
-
 # --- language coverage ------------------------------------------------------
 
 

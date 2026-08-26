@@ -954,3 +954,37 @@ an obviously synthetic phrase fixed the finding without weakening the scanner.
 
 If the value was real, rotate it first. Removing it in a new commit is not
 enough, because the old commit still carries it.
+
+## Continuous integration
+
+Three jobs in `.github/workflows/tests.yml`, plus the secret scan.
+
+| Job | What it covers | Needs |
+|---|---|---|
+| `lint` | ruff, ruleset pinned in pyproject | nothing |
+| `unit` | 165 tests: chunker, drift, backpressure, latency, tenancy, routing, pipeline against fakes | nothing |
+| `database` | tenant isolation, session lifecycle, billing, the join API | a Postgres service container |
+
+The model backends are deliberately absent from CI. faster-whisper, ctranslate2
+and piper pull about 1GB of wheels, and their tests fetch another 1.8GB of
+weights. Those tests skip themselves when the models are missing, which is why
+they are written that way.
+
+The database job is worth its service container. Tenant isolation is the one
+property that only means something against real SQL: the tests assert that one
+tenant's store returns nothing for another tenant's session, and a mock would
+happily agree with whatever the code did.
+
+The ruff ruleset is pinned in `pyproject.toml` rather than left to defaults. A
+lint gate that changes with every upgrade is one people learn to ignore. Some
+rules are switched off deliberately and say why in the config — `RUF001`
+flags the Telugu and Arabic strings as "ambiguous unicode", which is the rule
+being wrong about this project rather than the project being wrong.
+
+### Actions is currently blocked
+
+Runs fail before starting with "recent account payments have failed or your
+spending limit needs to be increased". Actions minutes are billable on private
+repositories. Until that is resolved the workflows will not run, which is why
+`.githooks/pre-push` exists: it catches secrets locally with no dependency on
+GitHub billing.

@@ -103,17 +103,17 @@ class TranslationRoom:
     # -------------------------------------------------------------------------
 
     async def connect(self, url: str, token: str) -> None:
-        import livekit.rtc as rtc
+        from livekit import rtc
 
         self._room = rtc.Room()
 
         @self._room.on("track_published")
-        def _on_published(publication, participant):  # noqa: ANN001
+        def _on_published(publication, participant):
             # With auto_subscribe off, nothing arrives unless it is asked for.
             self._subscribe_if_source(publication, participant)
 
         @self._room.on("track_subscribed")
-        def _on_subscribed(track, publication, participant):  # noqa: ANN001
+        def _on_subscribed(track, publication, participant):
             if track.kind != rtc.TrackKind.KIND_AUDIO:
                 return
             if publication.name != SOURCE_TRACK_NAME:
@@ -129,7 +129,7 @@ class TranslationRoom:
             )
 
         @self._room.on("disconnected")
-        def _on_disconnected(reason):  # noqa: ANN001
+        def _on_disconnected(reason):
             self._source_ready.clear()
             if self._closing:
                 log.info("room disconnected", extra={"reason": str(reason)})
@@ -155,7 +155,7 @@ class TranslationRoom:
 
         log.info("room connected", extra={"room": self.room_name})
 
-    def _subscribe_if_source(self, publication, participant) -> None:  # noqa: ANN001
+    def _subscribe_if_source(self, publication, participant) -> None:
         """Subscribe to the speaker's track and nothing else."""
         if publication.name != SOURCE_TRACK_NAME:
             return
@@ -201,7 +201,7 @@ class TranslationRoom:
         t_audio accumulates from the frames themselves rather than from the
         clock, so it stays correct if this process is briefly descheduled.
         """
-        import livekit.rtc as rtc
+        from livekit import rtc
 
         await self.wait_for_source()
         stream = rtc.AudioStream.from_track(track=self._source_track)
@@ -224,7 +224,7 @@ class TranslationRoom:
     # -------------------------------------------------------------------------
 
     async def publish_languages(self, languages: list[str]) -> None:
-        import livekit.rtc as rtc
+        from livekit import rtc
 
         # AudioEncoding is not re-exported on livekit.rtc, only on the
         # generated protobuf module. Pinned here so an SDK upgrade that moves
@@ -261,7 +261,7 @@ class TranslationRoom:
 
     async def push(self, language: str, pcm: bytes, sample_rate: int) -> None:
         """Hand synthesised audio to a language track."""
-        import livekit.rtc as rtc
+        from livekit import rtc
 
         entry = self._tracks.get(language)
         if entry is None:

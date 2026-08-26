@@ -30,7 +30,7 @@ that is a finding for the event, not something to tune away at run time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..obs.log import get_logger
 

@@ -86,7 +86,7 @@ class ContextLogger(logging.LoggerAdapter):
         kwargs["extra"] = merged
         return msg, kwargs
 
-    def bind(self, **fields: Any) -> "ContextLogger":
+    def bind(self, **fields: Any) -> ContextLogger:
         """Return a logger carrying these fields on every record."""
         merged = dict(self.extra or {})
         merged.update(fields)

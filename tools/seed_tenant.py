@@ -23,9 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from lad_translate.db import migrate  # noqa: E402
-from lad_translate.db.tenancy import validate_schema  # noqa: E402
-from lad_translate.obs.log import configure  # noqa: E402
+from lad_translate.db import migrate
+from lad_translate.db.tenancy import validate_schema
+from lad_translate.obs.log import configure
 
 DEFAULT_URL = "postgresql://lad@127.0.0.1:55432/salesmaya_agent"
 

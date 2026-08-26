@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from lad_translate.config import SessionLimits
 from lad_translate.session.drift import DriftPolicy
 from lad_translate.session.pipeline import TranslationSession

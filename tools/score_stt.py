@@ -72,11 +72,14 @@ def wer(reference: list[str], hypothesis: list[str]) -> tuple[int, int, int, int
         if op == "=":
             i, j = i - 1, j - 1
         elif op == "s":
-            subs += 1; i, j = i - 1, j - 1
+            subs += 1
+            i, j = i - 1, j - 1
         elif op == "d":
-            dels += 1; i -= 1
+            dels += 1
+            i -= 1
         else:
-            inss += 1; j -= 1
+            inss += 1
+            j -= 1
     return subs, dels, inss, dist[n][m]
 
 

@@ -52,7 +52,8 @@ def main() -> int:
         wav.setframerate(voice.config.sample_rate)
         voice.synthesize_wav(args.text, wav, set_wav_format=False)
 
-    frames = wave.open(str(args.out)).getnframes()
+    with wave.open(str(args.out)) as check:
+        frames = check.getnframes()
     seconds = frames / voice.config.sample_rate
     print(f"{args.out}  {seconds:.1f}s @ {voice.config.sample_rate}Hz")
     (args.out.with_suffix(".txt")).write_text(args.text + "\n")

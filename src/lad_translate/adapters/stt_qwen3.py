@@ -50,6 +50,7 @@ import asyncio
 import importlib.util
 import time
 from collections.abc import AsyncIterator
+from typing import Self
 
 import numpy as np
 
@@ -67,7 +68,7 @@ def resample_to_16k(pcm: bytes, source_rate: int) -> np.ndarray:
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     if source_rate == QWEN_SAMPLE_RATE or samples.size == 0:
         return samples
-    target = int(round(samples.size * QWEN_SAMPLE_RATE / source_rate))
+    target = round(samples.size * QWEN_SAMPLE_RATE / source_rate)
     if target <= 0:
         return np.zeros(0, dtype=np.float32)
     positions = np.linspace(0, samples.size - 1, target, dtype=np.float32)
@@ -139,7 +140,7 @@ class Qwen3SttAdapter(SttAdapter):
     def emits_interims(self) -> bool:
         return True
 
-    async def __aenter__(self) -> Qwen3SttAdapter:
+    async def __aenter__(self) -> Self:
         from qwen_asr import Qwen3ASRModel
 
         started = time.monotonic()

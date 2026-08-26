@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Self, runtime_checkable
 
 # =============================================================================
 # AUDIO
@@ -126,7 +126,7 @@ class SttAdapter(Protocol):
         """
         ...
 
-    async def __aenter__(self) -> SttAdapter: ...
+    async def __aenter__(self) -> Self: ...
 
     async def __aexit__(self, *exc: object) -> None: ...
 
@@ -227,7 +227,7 @@ class TtsAdapter(Protocol):
 
     def supports(self, language: str) -> bool: ...
 
-    async def __aenter__(self) -> TtsAdapter: ...
+    async def __aenter__(self) -> Self: ...
 
     async def __aexit__(self, *exc: object) -> None: ...
 

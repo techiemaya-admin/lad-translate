@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from typing import Self
 
 import numpy as np
 
@@ -45,7 +46,7 @@ def resample_to_16k(pcm: bytes, source_rate: int) -> np.ndarray:
     if source_rate == WHISPER_SAMPLE_RATE or samples.size == 0:
         return samples
     ratio = WHISPER_SAMPLE_RATE / source_rate
-    target_len = int(round(samples.size * ratio))
+    target_len = round(samples.size * ratio)
     if target_len <= 0:
         return np.zeros(0, dtype=np.float32)
     positions = np.linspace(0, samples.size - 1, target_len, dtype=np.float32)
@@ -120,7 +121,7 @@ class WhisperSttAdapter(SttAdapter):
         """Always False. See the module docstring."""
         return False
 
-    async def __aenter__(self) -> WhisperSttAdapter:
+    async def __aenter__(self) -> Self:
         from faster_whisper import WhisperModel
 
         started = time.monotonic()

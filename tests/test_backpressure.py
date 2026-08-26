@@ -143,6 +143,6 @@ async def test_guarded_wrapper_terminates_when_the_source_ends():
 
 def _drain_available(guard: BacklogGuard):
     """Synchronously pull whatever is buffered right now."""
-    while guard._buffer:  # noqa: SLF001 - test reaches into the buffer deliberately
+    while guard._buffer:
         guard.stats.frames_out += 1
-        yield guard._buffer.popleft()  # noqa: SLF001
+        yield guard._buffer.popleft()

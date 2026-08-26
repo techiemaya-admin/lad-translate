@@ -32,6 +32,7 @@ import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Self
 
 from ..obs.log import get_logger
 from .base import SpeechChunk, TtsAdapter, VoiceSpec
@@ -133,7 +134,7 @@ class PiperTtsAdapter(TtsAdapter):
     def supports(self, language: str) -> bool:
         return language in self._voices
 
-    async def __aenter__(self) -> PiperTtsAdapter:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc: object) -> None:

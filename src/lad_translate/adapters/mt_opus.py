@@ -55,7 +55,7 @@ class _Model:
     fan-out is five languages on a 16GB card.
     """
 
-    __slots__ = ("translator", "sp_source", "sp_target", "eos", "path")
+    __slots__ = ("eos", "path", "sp_source", "sp_target", "translator")
 
     def __init__(self, path: Path, device: str, compute_type: str, sharers: int):
         import ctranslate2
@@ -80,7 +80,7 @@ class _Model:
 class _Pair:
     """One target language, and the model that serves it."""
 
-    __slots__ = ("source", "target", "model", "target_token")
+    __slots__ = ("model", "source", "target", "target_token")
 
     def __init__(self, source: str, target: str, model: _Model, target_token: str | None):
         self.source = source
@@ -132,12 +132,12 @@ class _Pair:
             # Must lead the sequence, and must NOT go through SentencePiece:
             # the tokeniser would split ">>tel<<" into pieces the model does
             # not recognise as a language selector.
-            tokens = [self.target_token] + tokens
+            tokens = [self.target_token, *tokens]
         # Marian models require the source sequence to be terminated. Without
         # it the decoder never stops and emits degenerate repetition:
         # "Bonjour Bonjour Bonjour, bienvenue, bienvenue, bienvenue..."
         # It is silent, it looks like a quality problem, and it is not.
-        tokens = tokens + [model.eos]
+        tokens = [*tokens, model.eos]
         # Bound the output relative to the input. Belt and braces against
         # runaway decoding on a malformed model.
         max_len = max(32, int(len(tokens) * max_output_ratio))

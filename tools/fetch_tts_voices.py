@@ -55,7 +55,7 @@ def fetch(voice: str, force: bool) -> int:
         return 0
     try:
         download_voice(voice, VOICE_ROOT)
-    except Exception as exc:  # noqa: BLE001 - the operator needs the real cause
+    except Exception as exc:
         print(f"{voice:<26} FAILED: {exc}", file=sys.stderr)
         return 1
     size = model.stat().st_size / 1e6 if model.exists() else 0

@@ -41,14 +41,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from lad_translate.adapters.base import AudioFrame, VoiceSpec  # noqa: E402
-from lad_translate.adapters.mt_routing import RoutingMtAdapter  # noqa: E402
-from lad_translate.adapters.stt_whisper import WhisperSttAdapter  # noqa: E402
-from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter  # noqa: E402
-from lad_translate.chunker import ChunkerConfig, PhraseChunker  # noqa: E402
-from lad_translate.session.backpressure import BacklogGuard, guarded  # noqa: E402
-from lad_translate.obs.latency import LatencyRecorder, Stage  # noqa: E402
-from lad_translate.obs.log import configure, get_logger  # noqa: E402
+from lad_translate.adapters.base import AudioFrame, VoiceSpec
+from lad_translate.adapters.mt_routing import RoutingMtAdapter
+from lad_translate.adapters.stt_whisper import WhisperSttAdapter
+from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter
+from lad_translate.chunker import ChunkerConfig, PhraseChunker
+from lad_translate.obs.latency import LatencyRecorder, Stage
+from lad_translate.obs.log import configure, get_logger
+from lad_translate.session.backpressure import BacklogGuard, guarded
 
 log = get_logger("smoke")
 

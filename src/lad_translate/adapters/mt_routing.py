@@ -178,7 +178,7 @@ class RoutingMtAdapter(MtAdapter):
                     "translation backend failed",
                     extra={"backend": backend_name, "languages": languages},
                 )
-                return {lang: "" for lang in languages}
+                return dict.fromkeys(languages, "")
 
         parts = await asyncio.gather(
             *(run(name, langs) for name, langs in grouped.items())

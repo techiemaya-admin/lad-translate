@@ -37,8 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from lad_translate.adapters.base import Hypothesis  # noqa: E402
-from lad_translate.chunker import ChunkerConfig, CommitReason, PhraseChunker  # noqa: E402
+from lad_translate.adapters.base import Hypothesis
+from lad_translate.chunker import ChunkerConfig, PhraseChunker
 
 # =============================================================================
 # SAMPLE SOURCE TEXT

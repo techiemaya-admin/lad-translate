@@ -23,10 +23,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from lad_translate.api.join import create_app  # noqa: E402
-from lad_translate.api.tokens import TokenIssuer  # noqa: E402
-from lad_translate.db.pool import control_schema, database_url  # noqa: E402
-from lad_translate.obs.log import configure  # noqa: E402
+from lad_translate.api.join import create_app
+from lad_translate.api.tokens import TokenIssuer
+from lad_translate.db.pool import control_schema, database_url
+from lad_translate.obs.log import configure
 
 
 def main() -> int:

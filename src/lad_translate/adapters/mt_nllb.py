@@ -187,7 +187,7 @@ class NllbMtAdapter(MtAdapter):
         """
         wanted = [t for t in targets if self.supports(source, t)]
         if not wanted or not text.strip():
-            return {t: "" for t in wanted}
+            return dict.fromkeys(wanted, "")
         return await asyncio.get_running_loop().run_in_executor(
             self._executor, self._translate_sync, text, wanted
         )
@@ -206,7 +206,7 @@ class NllbMtAdapter(MtAdapter):
         except Exception:
             # One bad batch must not silence the room for the rest of the event.
             log.exception("NLLB batch failed", extra={"targets": targets})
-            return {t: "" for t in targets}
+            return dict.fromkeys(targets, "")
         return {
             target: self._decode(result.hypotheses[0], code)
             for target, code, result in zip(targets, codes, results)

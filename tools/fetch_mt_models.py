@@ -112,7 +112,7 @@ def fetch_converted(pair: str, quantization: str) -> int:
     try:
         converter = TransformersConverter(repo)
         converter.convert(str(dest), quantization=quantization, force=True)
-    except Exception as exc:  # noqa: BLE001 - surface the real cause to the operator
+    except Exception as exc:
         print(f"error: conversion failed: {exc}", file=sys.stderr)
         print("       This route needs transformers and torch installed.", file=sys.stderr)
         print("       It will not run on an Intel Mac; use the GPU box.", file=sys.stderr)

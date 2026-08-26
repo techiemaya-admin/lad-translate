@@ -81,9 +81,7 @@ def _ends_sentence(token: str) -> bool:
     if len(stem) == 1:
         # Initials: "J. Smith".
         return False
-    if normalise_token(stem) in _ABBREVIATIONS:
-        return False
-    return True
+    return normalise_token(stem) not in _ABBREVIATIONS
 
 
 def token_boundary_strength(token: str) -> BoundaryStrength:
