@@ -1,0 +1,28 @@
+# Git does not support inline comments in .gitignore. A pattern followed by
+# "# explanation" on the same line matches nothing, silently, which is how an
+# earlier version of this file tried to stage 3.5GB of toolchain.
+
+# Toolchain and models, all fetched rather than authored.
+.venv/
+.local/
+models/
+
+# Generated audio. Every one is reproducible from a fixture plus a tool, and
+# together they are larger than the entire source tree.
+fixtures/out/
+fixtures/heard/
+fixtures/compare/
+fixtures/qr.png
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Real credentials never belong here. The demo uses LiveKit's published
+# devkey/secret pair, which is deliberately public; anything else goes in
+# Secret Manager. See .gitleaks.toml.
+.env
+secrets/
+*.pem
+*.key

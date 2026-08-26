@@ -1,0 +1,10 @@
+Source: "A Scandal in Bohemia", from The Adventures of Sherlock Holmes,
+Arthur Conan Doyle, 1891. Public domain.
+
+Audio: LibriVox recording, archive.org item "adventures_holmes",
+file adventureholmes_01_doyle.mp3, seconds 50 to 125.
+Public domain (Creative Commons public domain mark).
+
+fixtures/holmes.txt is the ground truth for that 75 second span, taken from
+the published text rather than from any model's output. Scoring a model
+against another model's transcript measures agreement, not accuracy.

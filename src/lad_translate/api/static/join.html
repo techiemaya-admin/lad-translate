@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  viewport-fit=cover plus the safe-area insets in the CSS keep the controls
+  clear of the home indicator and notch. user-scalable=no is deliberately NOT
+  set: people zoom, and blocking it fails an accessibility check for no gain.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101317">
+<!-- Tells iOS this is an audio app so the lock screen shows controls. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Live Translation</title>
+<link rel="stylesheet" href="/static/join.css">
+</head>
+<body>
+<main id="app">
+
+  <header class="head">
+    <h1 id="event">Live Translation</h1>
+    <p id="subtitle" class="muted">Loading…</p>
+  </header>
+
+  <!-- Language picker. The tap on one of these buttons is the user gesture
+       that unblocks audio playback on iOS and Android; nothing here may
+       start audio outside that handler. -->
+  <section id="picker" hidden>
+    <h2 class="section-label">Choose your language</h2>
+    <div id="languages" class="languages"></div>
+  </section>
+
+  <!-- Listening state -->
+  <section id="playing" hidden>
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+    <p id="now-language" class="now-language"></p>
+
+    <label class="volume">
+      <span class="section-label">Volume</span>
+      <input id="volume" type="range" min="0" max="100" value="100"
+             aria-label="Volume">
+    </label>
+
+    <button id="change" class="secondary">Change language</button>
+    <p class="hint">Keep this page open. Use your phone's own volume buttons
+      if you are wearing earbuds.</p>
+  </section>
+
+  <section id="error" hidden>
+    <p id="error-text" class="error-text"></p>
+    <button id="retry" class="secondary">Try again</button>
+  </section>
+
+  <!-- muted until a language is chosen, then unmuted inside the tap handler.
+       autoplay + playsinline are both required on iOS. -->
+  <audio id="audio" autoplay playsinline></audio>
+</main>
+
+<script src="/static/vendor/livekit-client.umd.js"></script>
+<script src="/static/join.js"></script>
+</body>
+</html>

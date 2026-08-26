@@ -1,0 +1,11 @@
+livekit-client 2.22.0
+Downloaded 2026-08-25 from
+https://cdn.jsdelivr.net/npm/livekit-client@2.22.0/dist/livekit-client.umd.js
+
+Vendored rather than hotlinked on purpose. A venue join page must not depend on
+a CDN reachable from the audience's phones: conference wifi routinely blocks or
+throttles third party origins, and a page that cannot load its client library
+is a room full of people hearing nothing.
+
+Pinned to an exact version. Re-download deliberately, and test on a phone
+before an event.

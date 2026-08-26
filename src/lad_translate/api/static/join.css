@@ -1,0 +1,150 @@
+/* Join page.
+ *
+ * Built for a phone held one-handed in a dark auditorium, by someone who has
+ * not used it before and will not read instructions. Big targets, high
+ * contrast, no chrome that does not earn its place.
+ *
+ * Dark by default rather than following the system theme: a white screen in a
+ * darkened hall is unpleasant for the person holding it and distracting for
+ * everyone behind them.
+ */
+
+:root {
+  --bg: #101317;
+  --surface: #191d23;
+  --surface-hi: #232830;
+  --text: #f2f4f7;
+  --muted: #98a2b3;
+  --accent: #4a9eff;
+  --good: #34c759;
+  --warn: #ff9f0a;
+  --bad: #ff453a;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  max-width: 34rem;
+  margin: 0 auto;
+  /* Safe-area insets keep controls clear of the notch and home indicator. */
+  padding: calc(env(safe-area-inset-top) + 1.5rem)
+           calc(env(safe-area-inset-right) + 1.25rem)
+           calc(env(safe-area-inset-bottom) + 1.5rem)
+           calc(env(safe-area-inset-left) + 1.25rem);
+}
+
+.head { margin-bottom: 2rem; }
+h1 { font-size: 1.5rem; margin: 0 0 .25rem; font-weight: 650; }
+.muted { color: var(--muted); margin: 0; font-size: .95rem; }
+
+.section-label {
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 .75rem;
+}
+
+/* --- language picker ---------------------------------------------------- */
+
+.languages { display: grid; gap: .75rem; }
+
+.lang {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  /* 64px minimum: this gets tapped once, in the dark, possibly while
+     standing. Comfortably above the 44px accessibility floor. */
+  min-height: 64px;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--surface-hi);
+  border-radius: var(--radius);
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lang:active { background: var(--surface-hi); transform: scale(.99); }
+.lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lang .english { font-size: .9rem; font-weight: 400; color: var(--muted); }
+/* dir="rtl" already reverses the flex main axis. Adding row-reverse here
+   reverses it a second time and the two cancel out, rendering RTL rows
+   identically to LTR ones. The attribute alone is what does the work. */
+.lang[dir="rtl"] { text-align: right; }
+
+/* --- listening ---------------------------------------------------------- */
+
+.status { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
+
+.dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.dot.live { background: var(--good); }
+.dot.warn { background: var(--warn); }
+.dot.bad  { background: var(--bad); }
+
+/* Pulse only while connecting. A permanently animating dot in peripheral
+   vision for 45 minutes is an irritation, not information. */
+.dot.connecting { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.connecting { animation: none; }
+  .lang:active { transform: none; }
+}
+
+.now-language { font-size: 2rem; font-weight: 650; margin: .25rem 0 1.75rem; }
+
+.volume { display: block; margin-bottom: 1.75rem; }
+.volume input {
+  width: 100%;
+  height: 44px;           /* full-height touch target, not a hairline */
+  accent-color: var(--accent);
+  background: transparent;
+}
+
+.secondary {
+  width: 100%;
+  min-height: 52px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--surface-hi);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.secondary:active { background: var(--surface); }
+
+.hint { color: var(--muted); font-size: .85rem; margin-top: 1.25rem; }
+.error-text { color: var(--bad); font-size: 1.05rem; margin: 0 0 1.25rem; }
+
+/* A language the session lists but is not currently publishing. Dimmed rather
+   than disabled: a session still starting up has not published its tracks yet,
+   so blocking the choice would be wrong more often than it would be right. */
+.lang.unavailable { opacity: .55; }
+.lang.unavailable .english { color: var(--warn); }
+
+/* The original audio. Marked out because it behaves differently from the
+   translations: relayed straight from the room, so no transcription errors
+   and none of the pipeline's latency. */
+.lang .english.source { color: var(--accent); }
