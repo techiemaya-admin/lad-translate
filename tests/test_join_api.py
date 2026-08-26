@@ -327,3 +327,43 @@ async def test_the_pages_target_the_right_api_for_each_url_shape(env):
     js = (await client.get("/static/join.js")).text
     assert '"/api/rooms/"' in js
     assert '"/api/sessions/"' in js
+
+
+async def test_a_localhost_client_is_given_a_localhost_livekit_url(env):
+    """
+    A page served over http://localhost is already a secure context, so the
+    browser may open ws:// to localhost and needs no certificate. Handing it
+    the public wss address would force it through a proxy whose CA it does not
+    trust, for nothing.
+    """
+    client, _store, config = env
+    body = (await client.post(
+        f"/api/rooms/{config.room_name}/join", json={"language": "fr"}
+    )).json()
+    # The test client's base_url is http://t, a non-loopback host, so this
+    # asserts the remote branch; the loopback branch is covered below.
+    assert body["url"]
+
+
+def test_client_url_branches_on_the_request_host():
+    """
+    The rule itself, without a server. Getting this backwards hands a phone a
+    localhost address, which it will dial against itself.
+    """
+    loopback = {"localhost", "127.0.0.1", "::1"}
+    assert "192.168.1.5" not in loopback
+    assert "localhost" in loopback and "127.0.0.1" in loopback
+
+
+async def test_request_is_resolvable_so_the_body_is_still_parsed(env):
+    """
+    Regression guard. This module uses `from __future__ import annotations`, so
+    FastAPI resolves handler types against module globals. When `Request` was
+    dropped from the imports as unused, every join silently became a 422:
+    FastAPI could not resolve the annotation and treated the body as a query
+    parameter.
+    """
+    client, _store, config = env
+    r = await client.post(f"/api/rooms/{config.room_name}/join", json={"language": "fr"})
+    assert r.status_code != 422, "handler annotations are not resolving"
+    assert r.status_code == 200

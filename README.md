@@ -1144,3 +1144,57 @@ at, so one page serves both shapes:
 
 The join response carries `session_id` because a page reached by room name
 never saw one, and needs it to report the listener leaving.
+
+## Listening without a phone
+
+`tools/listen.py` joins through the real join API — resolve the room, get a
+token, subscribe to exactly one track — so if it hears audio, a phone will too.
+
+```bash
+.venv/bin/python tools/listen.py --room demo-room --language te --seconds 30 --out heard.wav
+```
+
+It reports peak amplitude, not just duration:
+
+    no speaker:  heard 6.0s  rms 0     peak 2      SILENT
+    speaking:    heard 70.0s rms 3289  peak 32768  SPEECH
+
+Duration alone calls both a pass. An open track carrying silence is the failure
+that looks healthy from every other angle, and peak is what separates them.
+
+Written for the venue check: confirming a language is on air without borrowing
+a handset, and without the certificate dance a browser needs.
+
+## Listening in a browser on the host
+
+```bash
+open http://127.0.0.1:8080/room/demo-room
+```
+
+No certificate involved. `localhost` is already a secure context, so a browser
+there may open `ws://` to localhost and needs to trust nothing.
+
+The join API advertises the LiveKit URL matching **how the client reached it**:
+
+    request from localhost   ->  ws://127.0.0.1:7880
+    request from a LAN host  ->  wss://<lan-ip>:8443
+
+Handing a local browser the public wss address would force it through a proxy
+whose CA it does not trust, for no gain. Handing a phone the localhost address
+would have it dial itself. The same internal/external split as
+`LIVEKIT_INTERNAL_URL`, applied to browsers.
+
+### Installing the dev CA on a phone
+
+If a phone will not load the page, install Caddy's root certificate once:
+
+    http://<lan-ip>:8081/ca.crt
+
+iOS: open it, allow the profile, then **Settings > General > About >
+Certificate Trust Settings** and switch it on. That second step is the one
+people miss, and without it nothing changes. Android: Settings > Security >
+Install a certificate > CA certificate.
+
+This matters more than a cosmetic warning. On iOS, tapping through can render
+the page while Safari still refuses the WebSocket to the same host, so you get
+a page that looks fine and never connects, with nothing explaining why.

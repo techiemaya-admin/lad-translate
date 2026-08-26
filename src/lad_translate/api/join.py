@@ -21,7 +21,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -178,14 +178,14 @@ def create_app(
         return await _describe(session)
 
     @app.post("/api/rooms/{room_name}/join")
-    async def room_join(room_name: str, body: JoinRequest):
+    async def room_join(room_name: str, body: JoinRequest, request: Request):
         store, session = await _load_room(room_name)
-        return await _issue_listener(store, session, body.language)
+        return await _issue_listener(store, session, body.language, _client_url(request))
 
     @app.post("/api/rooms/{room_name}/speak")
-    async def room_speak(room_name: str):
+    async def room_speak(room_name: str, request: Request):
         _store, session = await _load_room(room_name)
-        return await _issue_speaker(session)
+        return await _issue_speaker(session, _client_url(request))
 
     @app.get("/healthz")
     async def healthz():
@@ -209,7 +209,7 @@ def create_app(
         """
         return FileResponse(STATIC_DIR / "speak.html")
 
-    async def _issue_speaker(session) -> dict:
+    async def _issue_speaker(session, url: str | None = None) -> dict:
         """Publish-only token for the speaker. Shared by both URL shapes."""
         if app.state.issuer is None:
             raise HTTPException(503, "LiveKit not configured")
@@ -233,7 +233,7 @@ def create_app(
         )
         log.info("speaker token issued", extra={"session_id": sid})
         return {
-            "url": app.state.issuer.livekit_url,
+            "url": url or app.state.issuer.livekit_url,
             "token": token,
             "track_name": SOURCE_TRACK_NAME,
             "event_name": session["event_name"],
@@ -241,9 +241,9 @@ def create_app(
         }
 
     @app.post("/api/sessions/{session_id}/speak")
-    async def speak(session_id: str):
+    async def speak(session_id: str, request: Request):
         _store, session = await _load_session(session_id)
-        return await _issue_speaker(session)
+        return await _issue_speaker(session, _client_url(request))
 
     async def _describe(session) -> dict:
         """Language list with live availability. Shared by both URL shapes."""
@@ -314,7 +314,24 @@ def create_app(
         _store, session = await _load_session(session_id)
         return await _describe(session)
 
-    async def _issue_listener(store, session, language: str) -> dict:
+    def _client_url(request: Request) -> str:
+        """
+        The LiveKit URL to hand this particular client.
+
+        A page served over http://localhost is already a secure context, so a
+        browser there may open ws:// to localhost and needs no certificate at
+        all. Handing it the public wss address instead would force it through
+        a proxy whose CA it does not trust, for no gain.
+
+        Anything arriving on a non-loopback host is a real remote client and
+        gets the public address.
+        """
+        host = (request.url.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return app.state.issuer.internal_url
+        return app.state.issuer.livekit_url
+
+    async def _issue_listener(store, session, language: str, url: str | None = None) -> dict:
         """
         Register a listener and mint their token.
 
@@ -349,16 +366,16 @@ def create_app(
             # this to report the listener leaving.
             "session_id": sid,
             "language": language,
-            "url": token.url,
+            "url": url or token.url,
             "token": token.token,
             "track_name": track_name,
             "is_source": is_source,
         }
 
     @app.post("/api/sessions/{session_id}/join")
-    async def join(session_id: str, body: JoinRequest):
+    async def join(session_id: str, body: JoinRequest, request: Request):
         store, session = await _load_session(session_id)
-        return await _issue_listener(store, session, body.language)
+        return await _issue_listener(store, session, body.language, _client_url(request))
 
     @app.post("/api/listeners/{listener_id}/leave")
     async def leave(listener_id: str, session_id: str):

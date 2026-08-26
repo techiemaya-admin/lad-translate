@@ -61,9 +61,43 @@ write_config() {
 }
 
 https://${ip}:${PORT} {
+	# Access log. Without it there is no way to tell "the phone never reached
+	# us" from "the phone reached us and something failed", which is exactly
+	# the question that matters when someone says the page will not load.
+	log {
+		output file ${ROOT}/.local/caddy-access.log
+		format json
+	}
+
+	# The root CA, over plain http so a phone that does not yet trust us can
+	# still fetch it. Installing it once removes the warning entirely, and on
+	# iOS the warning is not merely cosmetic: Safari may render the page and
+	# still refuse the WebSocket, which fails silently.
+	handle /ca.crt {
+		root * ${ROOT}/.local/caddy/data/pki/authorities/local
+		rewrite * /root.crt
+		file_server
+	}
+
 	@livekit path /rtc /rtc/* /twirp/*
 	reverse_proxy @livekit 127.0.0.1:7880
 	reverse_proxy 127.0.0.1:8080
+}
+
+# Plain http, for one job only: handing out the CA to a device that cannot yet
+# trust the https listener. Chicken and egg otherwise.
+http://${ip}:8081 {
+	handle /ca.crt {
+		root * ${ROOT}/.local/caddy/data/pki/authorities/local
+		rewrite * /root.crt
+		file_server
+	}
+	# Must be a handle block, not a bare redir. Caddy orders directives by its
+	# own table and runs redir BEFORE handle, so a bare redirect swallows the
+	# CA download and returns 302 for the one request that cannot follow it.
+	handle {
+		redir https://${ip}:${PORT}{uri}
+	}
 }
 CADDY
 }
@@ -88,6 +122,12 @@ up)
   echo
   echo "  Those must differ. The Python SDK does not trust Caddy's CA and fails"
   echo "  with 'invalid peer certificate: UnknownIssuer' if pointed at the proxy."
+  echo
+  echo "  If a phone will not load the page, install the CA once:"
+  echo "    http://${IP}:8081/ca.crt"
+  echo "  iOS: open that, allow the profile, then Settings > General > About >"
+  echo "       Certificate Trust Settings and switch it on. Android: Settings >"
+  echo "       Security > Install a certificate > CA certificate."
   ;;
 down)
   [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null && rm -f "$PIDFILE" && echo stopped || echo "not running"
