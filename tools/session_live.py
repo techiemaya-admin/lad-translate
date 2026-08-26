@@ -112,6 +112,17 @@ async def listener(url: str, token: str, language: str, out: Path, stop: asyncio
     # receiving audio with nothing logged to say why.
     drains: set[asyncio.Task] = set()
 
+    def _want(publication) -> None:
+        """Subscribe to our one track, whenever it turns up."""
+        if publication.name == f"lang-{language}" and not publication.subscribed:
+            publication.set_subscribed(True)
+
+    @room.on("track_published")
+    def _on_published(publication, participant):
+        # Required with auto_subscribe off: the translator publishes its
+        # language tracks after this listener connects.
+        _want(publication)
+
     @room.on("track_subscribed")
     def _on(track, publication, participant):
         if publication.name == f"lang-{language}":
@@ -131,7 +142,13 @@ async def listener(url: str, token: str, language: str, out: Path, stop: asyncio
                 break
         await stream.aclose()
 
-    await room.connect(url, token)
+    # auto_subscribe off: a listener pulls ONE track. Left on, this test
+    # listener downloads every language published, which is exactly the
+    # bandwidth multiplication the join page avoids.
+    await room.connect(url, token, rtc.RoomOptions(auto_subscribe=False))
+    for participant in room.remote_participants.values():
+        for publication in participant.track_publications.values():
+            _want(publication)
     print(f"listener   waiting for lang-{language}")
     try:
         await asyncio.wait_for(attached.wait(), timeout=90)

@@ -988,3 +988,48 @@ spending limit needs to be increased". Actions minutes are billable on private
 repositories. Until that is resolved the workflows will not run, which is why
 `.githooks/pre-push` exists: it catches secrets locally with no dependency on
 GitHub billing.
+
+## End to end verification
+
+`tools/e2e.py` drives one real session through every layer and checks each,
+rather than checking that the parts import.
+
+```bash
+./tools/pg.sh start && ./tools/livekit.sh start
+.venv/bin/python tools/e2e.py --targets fr,ar
+```
+
+Thirteen checks: session registered, routing resolved, session ended cleanly,
+chunks produced, three real WebRTC listeners each receiving audio above the
+silence floor, transcripts stored and translated, listeners recorded and
+departed, billing settled, and transcript accuracy against the published text.
+
+The listeners are the point. Everything upstream can look healthy while the
+audience hears nothing, and only a subscriber that actually receives audio
+proves otherwise. The check asserts peak amplitude, not duration: an open track
+carrying silence has plenty of duration.
+
+**12 of 13 pass consistently.** The failure is transcript accuracy, and it is
+honest: this machine sheds audio, so words never reach the transcript.
+
+### Capacity numbers here are not reproducible
+
+Measured shedding across runs, same fixture, same machine:
+
+| Targets | Runs |
+|---|---|
+| fr, te (Opus-MT + NLLB) | 52%, 37%, 49% |
+| fr, ar (both Opus-MT) | 2%, 54% |
+
+The spread within one configuration is wider than the gap between
+configurations. Any single number from this box is unreliable, and an earlier
+version of this section claimed NLLB was the cause of a difference that the
+variance does not support.
+
+What IS reproducible is the structural result: every layer works, every run.
+Treat the capacity figures as evidence that two cores are not enough, not as a
+measurement of anything finer.
+
+p95 latency reaches 42s against a p50 near 7s. That tail is the backlog guard
+shedding and recovering, and it is another reason the numbers here describe the
+hardware rather than the design.
