@@ -1088,3 +1088,36 @@ and the idle cap once one has. An earlier version set only the idle cap, and
 the room's own 60 second default killed the session a minute after start —
 before anyone could scan a code. At a venue that is the service dying quietly
 while the desk is still being patched in.
+
+## Whisper invents phrases over silence
+
+Whisper emits stock phrases when there is nothing to transcribe, because its
+training data is full of YouTube audio. Observed in a live session:
+"Thanks for watching!" and a long run of bare "Thank you." where nobody said
+either. Translated and spoken to an audience, an invented politeness is worse
+than a gap.
+
+Four defences, cheapest first, in `adapters/stt_whisper.py`:
+
+**An energy gate.** A buffer quieter than `speech_rms` is never transcribed at
+all. A model that is not asked about silence cannot answer with a stock phrase,
+and skipping the pass saves CPU on a machine that already sheds audio. Six
+seconds of room tone now produces nothing, without the model running once.
+
+**Explicit VAD parameters** rather than library defaults, so an upstream change
+cannot quietly loosen the gate.
+
+**Whisper's own signals.** Each segment carries `no_speech_prob` and
+`avg_logprob`. A segment the model itself believes was not speech, which
+produced words anyway, is dropped whatever those words are.
+
+**A blocklist, gated on confidence.** "Thanks for watching" is unambiguously an
+artefact. "Thank you" is a real thing people say at a conference, so the phrase
+only counts as evidence when the segment already looks doubtful. A blanket
+blocklist would delete genuine speech to remove an artefact.
+
+`is_hallucination()` is a pure function of the three signals, so it is tested
+directly rather than by trying to reproduce the audio that triggers it — none
+of the synthetic silence, hum or breath conditions I tried would reproduce it,
+because a phone in a real room carries far more speech-like structure than
+Gaussian noise does.

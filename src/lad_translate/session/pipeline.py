@@ -222,18 +222,12 @@ class TranslationSession:
 
     async def _pump(self) -> None:
         """Drive audio through STT and the chunker until the source ends."""
-        frames = guarded(self.room.source_frames(), self.guard)
+        frames = self._anchor_clock(guarded(self.room.source_frames(), self.guard))
 
         async for hypothesis in self.stt.transcribe(frames):
             if self._stop.is_set():
                 break
             self._last_audio_at = time.monotonic()
-            if not self.recorder.clock.anchored:
-                # Anchor from the first hypothesis, whose t_audio_end maps to
-                # now minus however long the backend took. Anchoring on the
-                # first audio frame instead would be more accurate; this is
-                # what is available without threading the clock through STT.
-                self.recorder.clock.anchor(t_audio=0.0, t_wall=self._started_at)
 
             for chunk in self.chunker.feed(hypothesis):
                 await self._dispatch(chunk)
@@ -243,6 +237,31 @@ class TranslationSession:
 
         for chunk in self.chunker.flush():
             await self._dispatch(chunk)
+
+    async def _anchor_clock(self, frames):
+        """
+        Anchor the audio clock to the FIRST AUDIO FRAME, not to session start.
+
+        The service starts before the venue publisher connects, often by many
+        minutes. Anchoring at session start maps the speaker's t_audio=0 to a
+        wall time long before they said anything, and every latency figure is
+        inflated by exactly that gap.
+
+        Measured on a real phone: the session started at 13:25:22 and the
+        speaker connected 199 seconds later, which reported latencies around
+        90 seconds for audio that was in fact a few seconds behind.
+        """
+        async for frame in frames:
+            if not self.recorder.clock.anchored:
+                self.recorder.clock.anchor(t_audio=frame.t_audio, t_wall=frame.t_wall)
+                log.info(
+                    "audio clock anchored",
+                    extra={
+                        "waited_s": round(frame.t_wall - self._started_at, 1),
+                        "t_audio": frame.t_audio,
+                    },
+                )
+            yield frame
 
     async def _dispatch(self, chunk: PhraseChunk) -> None:
         """Translate one phrase and hand it to every language worker."""

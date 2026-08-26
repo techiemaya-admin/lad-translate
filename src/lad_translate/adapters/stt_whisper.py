@@ -33,6 +33,55 @@ log = get_logger(__name__)
 
 WHISPER_SAMPLE_RATE = 16_000
 
+# Phrases Whisper emits when there is nothing to transcribe. They come from its
+# training data, which is full of YouTube audio, and they appear over silence
+# and room tone with high confidence in the text itself.
+#
+# Observed live: "Thanks for watching!" and a long run of bare "Thank you."
+# in a session where nobody said either. Translated and spoken to an audience,
+# an invented politeness is worse than a gap.
+#
+# Matched only when the segment ALSO looks like non-speech. "Thank you" is a
+# real thing people say at a conference, and a blanket blocklist would delete
+# genuine speech to remove an artefact.
+HALLUCINATED_ON_SILENCE = frozenset(
+    {
+        "thank you.", "thank you", "thanks for watching!", "thanks for watching",
+        "thank you for watching.", "thank you for watching",
+        "thanks for watching and see you next time.",
+        "please subscribe to my channel.", "subtitles by the amara.org community",
+        "you", "bye.", "bye", "okay.", ".", "...",
+    }
+)
+
+
+def is_hallucination(text: str, no_speech_prob: float, avg_logprob: float) -> bool:
+    """
+    Whether a segment looks invented rather than heard.
+
+    Three independent signals, because none is sufficient alone:
+
+      no_speech_prob   the model's own verdict that this was not speech. High
+                       and yet it produced words anyway is the exact shape of
+                       a silence hallucination.
+      avg_logprob      confidence. Real speech transcribed badly still scores
+                       higher than text conjured from nothing.
+      the phrase       only consulted when one of the above is already
+                       suspicious, so genuine thanks survive.
+    """
+    stripped = text.strip().lower()
+    if not stripped:
+        return True
+
+    # Confidently non-speech: drop whatever it produced, whatever the words.
+    if no_speech_prob > 0.8 and avg_logprob < -0.5:
+        return True
+
+    # A stock phrase is only evidence when the segment is already doubtful.
+    return stripped in HALLUCINATED_ON_SILENCE and (
+        no_speech_prob > 0.5 or avg_logprob < -0.7
+    )
+
 
 def resample_to_16k(pcm: bytes, source_rate: int) -> np.ndarray:
     """
@@ -68,6 +117,8 @@ class WhisperSttAdapter(SttAdapter):
         max_window_s: float = 8.0,
         silence_rms: float = 0.005,
         silence_duration_s: float = 0.7,
+        speech_rms: float = 0.006,
+        vad_threshold: float = 0.5,
     ) -> None:
         self.model_size = model_size
         self.language = language
@@ -94,6 +145,18 @@ class WhisperSttAdapter(SttAdapter):
         self.silence_rms = silence_rms
         self.silence_duration_s = silence_duration_s
 
+        self.speech_rms = speech_rms
+        """
+        Refuse to transcribe a buffer quieter than this.
+
+        The cheapest defence against inventing words: a model asked about
+        silence cannot answer with a stock phrase if it is never asked. It also
+        saves the pass entirely, which on a machine that sheds audio is not
+        incidental.
+        """
+
+        self.vad_threshold = vad_threshold
+
         self._model = None
         self._buffer = np.zeros(0, dtype=np.float32)
         self._buffer_start_audio = 0.0
@@ -105,6 +168,7 @@ class WhisperSttAdapter(SttAdapter):
         self._quiet_for = 0.0
         self._over_budget_passes = 0
         self._warned_unsustainable = False
+        self._suppressed = 0
 
     # -------------------------------------------------------------------------
 
@@ -203,19 +267,54 @@ class WhisperSttAdapter(SttAdapter):
             return ""
         buffer = self._buffer.copy()
 
+        # Do not ask the model about silence.
+        level = float(np.sqrt(np.mean(np.square(buffer))))
+        if level < self.speech_rms:
+            return ""
+
         started = time.monotonic()
 
         def run() -> str:
+            from faster_whisper.vad import VadOptions
+
             segments, _info = self._model.transcribe(
                 buffer,
                 language=self.language,
                 beam_size=1,
-                # Whisper hallucinates confidently on silence and part-words.
-                # These suppress the worst of it without a second pass.
+                # Never carry context across passes: a hallucination in one
+                # window otherwise seeds the next.
                 condition_on_previous_text=False,
                 vad_filter=True,
+                # Explicit rather than default, so an upstream change cannot
+                # quietly loosen the gate that keeps room tone out.
+                vad_parameters=VadOptions(
+                    threshold=self.vad_threshold,
+                    min_speech_duration_ms=250,
+                    min_silence_duration_ms=400,
+                    speech_pad_ms=200,
+                ),
+                # Whisper's own guards, tightened. A segment the model itself
+                # doubts is not worth translating.
+                no_speech_threshold=0.6,
+                log_prob_threshold=-1.0,
+                compression_ratio_threshold=2.4,
             )
-            return " ".join(s.text.strip() for s in segments).strip()
+
+            kept = []
+            for seg in segments:
+                if is_hallucination(seg.text, seg.no_speech_prob, seg.avg_logprob):
+                    self._suppressed += 1
+                    log.debug(
+                        "suppressed a likely hallucination",
+                        extra={
+                            "text": seg.text.strip(),
+                            "no_speech_prob": round(seg.no_speech_prob, 3),
+                            "avg_logprob": round(seg.avg_logprob, 3),
+                        },
+                    )
+                    continue
+                kept.append(seg.text.strip())
+            return " ".join(kept).strip()
 
         text = await asyncio.to_thread(run)
         self._note_pass_cost(time.monotonic() - started, buffer.size / WHISPER_SAMPLE_RATE)
