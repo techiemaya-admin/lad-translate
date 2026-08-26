@@ -64,8 +64,27 @@ class TokenIssuer:
         api_key: str | None = None,
         api_secret: str | None = None,
         ttl_s: int = DEFAULT_TTL_S,
+        internal_url: str | None = None,
     ) -> None:
         self.livekit_url = livekit_url or os.getenv("LIVEKIT_URL")
+        """
+        What CLIENTS are told to dial. Behind a TLS proxy this is the public
+        wss:// address, because a browser will not open an insecure WebSocket
+        from a secure page.
+        """
+
+        self.internal_url = (
+            internal_url or os.getenv("LIVEKIT_INTERNAL_URL") or self.livekit_url
+        )
+        """
+        What SERVER-SIDE components dial: the translation service and any
+        tooling running on the same host.
+
+        These must not go through the proxy. The Python SDK does not trust
+        Caddy's internal CA and fails with "invalid peer certificate:
+        UnknownIssuer", and routing local traffic out through TLS to come
+        straight back would be pointless even if it worked.
+        """
         self._api_key = api_key or os.getenv("LIVEKIT_API_KEY")
         self._api_secret = api_secret or os.getenv("LIVEKIT_API_SECRET")
         self.ttl_s = ttl_s

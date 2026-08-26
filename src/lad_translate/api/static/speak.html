@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101317">
+<title>Speak</title>
+<link rel="stylesheet" href="/static/join.css">
+<link rel="stylesheet" href="/static/speak.css">
+</head>
+<body>
+<main id="app">
+
+  <header class="head">
+    <h1 id="event">Speaker</h1>
+    <p id="subtitle" class="muted">Loading…</p>
+  </header>
+
+  <!-- The tap on this button is the user gesture that unlocks microphone
+       access. Nothing may request the mic outside its handler. -->
+  <section id="start" hidden>
+    <button id="go" class="lang start-btn">
+      <span>Start speaking</span>
+      <span class="english">uses this phone's mic</span>
+    </button>
+    <p class="hint">Hold the phone about a hand's width from your mouth and
+      speak normally. Everything you say is transcribed, translated and sent to
+      listeners.</p>
+  </section>
+
+  <section id="live" hidden>
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+
+    <!-- A level meter, not decoration. Without it there is no way to tell a
+         working mic from a muted one until someone reports silence. -->
+    <div class="meter" role="img" aria-label="Microphone input level">
+      <div id="bar" class="meter-fill"></div>
+    </div>
+    <p id="level-note" class="hint">Speak, and the bar should move.</p>
+
+    <dl class="stats">
+      <dt>Listeners</dt><dd id="listeners">—</dd>
+      <dt>Sent</dt><dd id="sent">0s</dd>
+    </dl>
+
+    <button id="stop" class="secondary">Stop speaking</button>
+  </section>
+
+  <section id="error" hidden>
+    <p id="error-text" class="error-text"></p>
+    <button id="retry" class="secondary">Try again</button>
+  </section>
+
+</main>
+<script src="/static/vendor/livekit-client.umd.js"></script>
+<script src="/static/speak.js"></script>
+</body>
+</html>

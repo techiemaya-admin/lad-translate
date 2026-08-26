@@ -87,10 +87,25 @@ class LanguageTrack:
 class TranslationRoom:
     """One room: one source track in, N language tracks out."""
 
-    def __init__(self, room_name: str, sample_rate: int, num_channels: int = 1) -> None:
+    def __init__(
+        self,
+        room_name: str,
+        sample_rate: int,
+        num_channels: int = 1,
+        source_timeout_s: float = 60.0,
+    ) -> None:
         self.room_name = room_name
         self.sample_rate = sample_rate
         self.num_channels = num_channels
+
+        self.source_timeout_s = source_timeout_s
+        """
+        How long to wait for the venue publisher before giving up.
+
+        60s suits a test. A real event needs far longer: the service is started
+        before the hall fills, and a session that dies because the desk was
+        connected fifteen minutes late has failed for no good reason.
+        """
         self._room = None
         self._tracks: dict[str, LanguageTrack] = {}
         self._source_track = None
@@ -203,7 +218,7 @@ class TranslationRoom:
         """
         from livekit import rtc
 
-        await self.wait_for_source()
+        await self.wait_for_source(self.source_timeout_s)
         stream = rtc.AudioStream.from_track(track=self._source_track)
         t_audio = 0.0
         try:

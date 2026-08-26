@@ -1,0 +1,37 @@
+/* Speaker page. Shares tokens with join.css; only what differs lives here. */
+
+.start-btn { justify-content: center; gap: .35rem; flex-direction: column; align-items: flex-start; }
+.start-btn .english { color: var(--muted); }
+
+/* Level meter. Its whole job is to distinguish a working mic from a muted one
+   before anyone reports silence, so it needs to be big enough to read at arm's
+   length in a dark room. */
+.meter {
+  height: 14px;
+  background: var(--surface);
+  border: 1px solid var(--surface-hi);
+  border-radius: 7px;
+  overflow: hidden;
+  margin: .25rem 0 .5rem;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--good);
+  border-radius: 7px;
+  /* Fast attack so a syllable registers, slower release so the bar is
+     readable rather than flickering. */
+  transition: width .06s linear;
+}
+.meter-fill.hot { background: var(--warn); }
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .35rem 1.25rem;
+  margin: 1.5rem 0;
+  font-size: .95rem;
+}
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; font-variant-numeric: tabular-nums; }

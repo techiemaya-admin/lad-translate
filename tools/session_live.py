@@ -192,7 +192,7 @@ async def main() -> int:
     configure("WARNING")
     targets = [t.strip() for t in args.targets.split(",") if t.strip()]
     issuer = TokenIssuer()
-    url = issuer.livekit_url
+    url = issuer.internal_url
 
     config = SessionConfig(
         session_id=str(uuid.uuid4()),

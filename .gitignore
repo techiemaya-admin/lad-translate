@@ -12,7 +12,7 @@ models/
 fixtures/out/
 fixtures/heard/
 fixtures/compare/
-fixtures/qr.png
+fixtures/qr*.png
 
 __pycache__/
 *.pyc

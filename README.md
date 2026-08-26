@@ -1033,3 +1033,58 @@ measurement of anything finer.
 p95 latency reaches 42s against a p50 near 7s. That tail is the backlog guard
 shedding and recovering, and it is another reason the numbers here describe the
 hardware rather than the design.
+
+## Speaking into it from a phone
+
+No microphone hardware needed. One phone is the speaker, another is the
+audience.
+
+```bash
+./tools/pg.sh start && ./tools/livekit.sh start
+./tools/tls.sh up                       # prints the two URLs to export
+export LAD_DATABASE_URL=postgresql://lad@127.0.0.1:55432/salesmaya_agent
+export LAD_CONTROL_SCHEMA=lad_dev
+export LIVEKIT_URL=wss://<lan-ip>:8443
+export LIVEKIT_INTERNAL_URL=ws://127.0.0.1:7880
+.venv/bin/python tools/serve_join.py --host 127.0.0.1 --port 8080 &
+.venv/bin/python tools/serve_session.py --room demo-room --targets fr,ar --wait 1800
+```
+
+`serve_session.py` prints a `/speak` and a `/s` path. Open `/speak` on one
+phone, `/s` on another, and talk. Generate QR codes for both with
+`tools/make_qr.py`.
+
+Use two devices. Speaking and listening on the same phone feeds the
+translation back into its own microphone.
+
+### Why there is TLS at all
+
+Browsers only expose a microphone in a secure context. On plain http from
+anything but localhost, `navigator.mediaDevices` is undefined: there is no
+microphone API to call, so a phone cannot be the speaker. That is the only
+reason `tools/tls.sh` exists.
+
+Caddy terminates TLS in front of both services. Only the LiveKit signalling
+WebSocket is proxied; WebRTC media is UDP with DTLS-SRTP and already encrypted,
+so it goes direct.
+
+Your phone will warn about the certificate once. Proceeding is what makes the
+origin secure enough for the microphone prompt to appear.
+
+### Two URLs, and they must differ
+
+    LIVEKIT_URL           wss://<lan-ip>:8443    what BROWSERS dial
+    LIVEKIT_INTERNAL_URL  ws://127.0.0.1:7880    what THIS HOST dials
+
+The Python SDK does not trust Caddy's internal CA and fails with
+`invalid peer certificate: UnknownIssuer` if pointed at the proxy. Routing
+local traffic out through TLS to come straight back would be pointless even if
+it worked.
+
+### A speaker wait is not an idle cap
+
+`serve_session.py --wait` governs both how long to wait for a speaker to appear
+and the idle cap once one has. An earlier version set only the idle cap, and
+the room's own 60 second default killed the session a minute after start —
+before anyone could scan a code. At a venue that is the service dying quietly
+while the desk is still being patched in.

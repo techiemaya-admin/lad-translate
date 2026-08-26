@@ -91,7 +91,9 @@ def create_app(
     app.state.control_schema = control_schema or os.getenv("LAD_CONTROL_SCHEMA")
     app.state.resolver = None
     app.state.inspector = (
-        RoomInspector(issuer.livekit_url, issuer._api_key, issuer._api_secret)
+        # internal_url, not the advertised one: this call runs on the server
+        # and must not be routed out through the TLS proxy.
+        RoomInspector(issuer.internal_url, issuer._api_key, issuer._api_secret)
         if issuer is not None
         else None
     )
@@ -140,6 +142,52 @@ def create_app(
     async def join_page(session_id: str):
         """The page itself. Session detail is fetched by the page, not baked in."""
         return FileResponse(STATIC_DIR / "join.html")
+
+    @app.get("/speak/{session_id}")
+    async def speak_page(session_id: str):
+        """
+        The speaker's own page: publishes a phone microphone as source-audio.
+
+        A venue would never use this. Section 8 is explicit that the feed comes
+        from an aux or matrix send carrying the speaker mic only, through a USB
+        interface or Dante. This exists so the pipeline can be driven by a
+        human voice with no hardware at all, which is the difference between
+        demonstrating the system and describing it.
+        """
+        return FileResponse(STATIC_DIR / "speak.html")
+
+    @app.post("/api/sessions/{session_id}/speak")
+    async def speak(session_id: str):
+        """Issue a publish-only token for the speaker."""
+        if app.state.issuer is None:
+            raise HTTPException(503, "LiveKit not configured")
+
+        _store, session = await _load_session(session_id)
+        if session["status"] not in ("starting", "live"):
+            raise HTTPException(410, "this session has ended")
+
+        # Refuse a second speaker rather than let two people talk over each
+        # other into one transcript. The SFU would happily carry both.
+        if app.state.inspector is not None:
+            live = await app.state.inspector.published_languages(session["room_name"])
+            if SOURCE_TRACK_NAME in live:
+                raise HTTPException(
+                    409,
+                    "someone is already speaking in this session; only one "
+                    "source track is supported",
+                )
+
+        token = app.state.issuer.for_publisher(
+            session["room_name"], identity=f"speaker-{session_id[:8]}"
+        )
+        log.info("speaker token issued", extra={"session_id": session_id})
+        return {
+            "url": app.state.issuer.livekit_url,
+            "token": token,
+            "track_name": SOURCE_TRACK_NAME,
+            "event_name": session["event_name"],
+            "source_language": session["source_language"],
+        }
 
     @app.get("/api/sessions/{session_id}")
     async def session_info(session_id: str):
