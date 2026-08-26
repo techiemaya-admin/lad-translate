@@ -55,24 +55,13 @@ from typing import Self
 import numpy as np
 
 from ..obs.log import get_logger
+from .audio import SAMPLE_RATE_16K, resample_to_16k
 from .base import AudioFrame, Hypothesis, SttAdapter
 
 log = get_logger(__name__)
 
-QWEN_SAMPLE_RATE = 16_000
+QWEN_SAMPLE_RATE = SAMPLE_RATE_16K
 DEFAULT_MODEL = "Qwen/Qwen3-ASR-1.7B"
-
-
-def resample_to_16k(pcm: bytes, source_rate: int) -> np.ndarray:
-    """int16 PCM to the float32 mono 16kHz the model expects."""
-    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    if source_rate == QWEN_SAMPLE_RATE or samples.size == 0:
-        return samples
-    target = round(samples.size * QWEN_SAMPLE_RATE / source_rate)
-    if target <= 0:
-        return np.zeros(0, dtype=np.float32)
-    positions = np.linspace(0, samples.size - 1, target, dtype=np.float32)
-    return np.interp(positions, np.arange(samples.size), samples).astype(np.float32)
 
 
 class Qwen3SttAdapter(SttAdapter):

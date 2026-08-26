@@ -62,8 +62,12 @@ STT_BACKENDS: dict[str, BackendSpec] = {
         "fastconformer",
         credible_on=GPU_ONLY,
         note=(
-            "NVIDIA cache-aware streaming transducer, ~114M params, "
-            "configurable lookahead (0/80/480/1040ms); needs CUDA"
+            "NVIDIA cache-aware streaming transducer, ~114M params. Constant "
+            "cost per step at any talk length, which is the property Whisper "
+            "cannot have. Lookahead selectable at load: 0/80/480/1040ms, "
+            "defaulted here to 480ms rather than NeMo's 1040ms. ENGLISH ONLY "
+            "-- 'multi' in the model name means multiple lookaheads, not "
+            "multilingual. Adapter written, never run: needs CUDA"
         ),
     ),
     "qwen3-asr": BackendSpec(
@@ -122,10 +126,9 @@ def build_stt(name: str, **options: object) -> SttAdapter:
 
         return WhisperSttAdapter(**options)  # type: ignore[arg-type]
     if name == "fastconformer":
-        raise NotImplementedError(
-            "fastconformer adapter not written yet. Purpose-built streaming "
-            "transducer, ~114M params, needs the A4000."
-        )
+        from .stt_fastconformer import FastConformerSttAdapter
+
+        return FastConformerSttAdapter(**options)  # type: ignore[arg-type]
     if name == "qwen3-asr":
         from .stt_qwen3 import Qwen3SttAdapter
 

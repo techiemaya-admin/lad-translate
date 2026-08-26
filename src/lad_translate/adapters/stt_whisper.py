@@ -27,11 +27,12 @@ from typing import Self
 import numpy as np
 
 from ..obs.log import get_logger
+from .audio import SAMPLE_RATE_16K, resample_to_16k
 from .base import AudioFrame, Hypothesis, SttAdapter
 
 log = get_logger(__name__)
 
-WHISPER_SAMPLE_RATE = 16_000
+WHISPER_SAMPLE_RATE = SAMPLE_RATE_16K
 
 # Phrases Whisper emits when there is nothing to transcribe. They come from its
 # training data, which is full of YouTube audio, and they appear over silence
@@ -81,25 +82,6 @@ def is_hallucination(text: str, no_speech_prob: float, avg_logprob: float) -> bo
     return stripped in HALLUCINATED_ON_SILENCE and (
         no_speech_prob > 0.5 or avg_logprob < -0.7
     )
-
-
-def resample_to_16k(pcm: bytes, source_rate: int) -> np.ndarray:
-    """
-    Convert int16 PCM to the float32 mono 16kHz Whisper expects.
-
-    Linear interpolation, no anti-aliasing filter. That introduces aliasing
-    when downsampling, which Whisper tolerates well and a proper resampler
-    would avoid. Revisit if transcript quality is ever traced back to here.
-    """
-    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    if source_rate == WHISPER_SAMPLE_RATE or samples.size == 0:
-        return samples
-    ratio = WHISPER_SAMPLE_RATE / source_rate
-    target_len = round(samples.size * ratio)
-    if target_len <= 0:
-        return np.zeros(0, dtype=np.float32)
-    positions = np.linspace(0, samples.size - 1, target_len, dtype=np.float32)
-    return np.interp(positions, np.arange(samples.size), samples).astype(np.float32)
 
 
 class WhisperSttAdapter(SttAdapter):

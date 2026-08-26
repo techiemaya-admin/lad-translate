@@ -31,8 +31,8 @@ to a room yet.
 | Room transport (`session/room.py`) | Done |
 | Session pipeline (`session/pipeline.py`) | Done, 15 tests |
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
-| Browser join page | Not started |
-| Streaming STT adapter (FastConformer) | Needs the A4000 |
+| Browser join page | Done, 38 tests |
+| Streaming STT adapter (FastConformer) | Written, unrun; 35 tests on the frame arithmetic |
 
 ## Measured on the dev Mac
 
@@ -169,8 +169,30 @@ timer, which leaves a long unstable tail. Against the chunker that costs about
 faster GPU does not close it, because the cost is architectural.
 
 Production needs a streaming transducer. NVIDIA's cache-aware streaming
-FastConformer is the intended target on the A4000. `registry.py` already has the
-slot; the adapter is not written.
+FastConformer is the target, and `adapters/stt_fastconformer.py` is now written
+against it. Each step encodes only new audio and carries its left context in a
+cache tensor, so cost per step is constant however long the speaker has been
+talking -- twenty minutes in costs what the first second cost.
+
+It has not run. NeMo needs torch with CUDA and this machine has neither, so the
+tensor path is unverified until the A4000 is available. What IS tested here is
+everything deciding which audio reaches the encoder: the chunk schedule, the
+pre-encode cache, the retention bound, the word stamping. That is where a
+streaming adapter goes wrong quietly, and 35 tests cover it.
+
+Two decisions in there are worth knowing before anyone tunes it.
+
+**The lookahead defaults to 480ms, not NeMo's 1040ms.** The model carries four
+lookaheads in one set of weights, selectable at load. The lookahead is time
+spent before translation or synthesis has begun, so on a 2 second budget 1040ms
+is more than half of it gone; 480ms costs 0.3 WER points and gives 560ms back.
+
+**NeMo's own streaming buffer is not used.** `CacheAwareStreamingAudioBuffer` is
+a file simulator: it rewrites its whole tensor on every append, never releases
+consumed audio, and its iterator returns when the buffer runs dry instead of
+waiting for more. On a ninety minute keynote that is O(n^2) work, unbounded
+memory, and a loop that exits the first time the speaker pauses. The chunking is
+reimplemented following the same arithmetic, retaining one chunk plus one cache.
 
 There is a second symptom worth knowing. Because Whisper only emits at silence,
 the chunker never sees a genuine mid-utterance interim and degenerates to a
