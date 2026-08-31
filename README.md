@@ -72,6 +72,30 @@ Run the tests:
 .venv/bin/python -m pytest tests/ -q
 ```
 
+That is enough for the tests and the offline tools. Running the thing needs a
+database, an SFU and the models as well, and `tools/bootstrap.sh` provisions all
+of it:
+
+```bash
+./tools/bootstrap.sh
+./tools/demo.sh up
+```
+
+`bootstrap.sh` creates the venv with the CPU backend extras, finds a Postgres 16
+installation and initialises the cluster under `.local/pgdata`, builds
+`livekit-server` from source into `.local/`, and fetches the translation models
+and voices. It is idempotent, so it is safe to run again after fixing whatever
+it complained about. `--no-models` skips the several hundred MB of downloads;
+`--recreate-db` throws the cluster away and rebuilds it.
+
+`demo.sh up` then prints a `http://127.0.0.1:8080/s/<session>` URL. Open it,
+tap a language, and you are listening. `demo.sh down` stops everything.
+
+Postgres is the one thing bootstrap will not install for you, because doing so
+needs a package manager and admin rights. On macOS `brew install postgresql@16`,
+on Debian or Ubuntu `apt install postgresql-16`; the EnterpriseDB tarball
+unpacked into `.local/pgsql` also works, and is what this machine uses.
+
 ## Tuning the chunker
 
 The chunker decides when a revisable transcript has settled enough to translate.
@@ -342,6 +366,22 @@ export LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET
 ```
 
 `--dev` uses the well-known devkey/secret pair. Local development only.
+
+`tools/bootstrap.sh` builds it, pinned to v1.13.6. Two things about that pin.
+
+It is cloned and built rather than `go install`ed. From v1.10 the module's
+go.mod carries replace directives, and `go install module@version` refuses
+those outright: "It must not contain directives that would cause it to be
+interpreted differently than if it were the main module". Inside a checkout it
+IS the main module, so the same build works.
+
+The version has to keep up with the vendored client. livekit-client 2.22.0
+signals on `/rtc/v1` and falls back to `/rtc` when the server answers 404, so
+an older server still works -- v1.9.1 does -- but every join pays a failed
+WebSocket handshake first, and the console says
+"v1 RTC path not found. Consider upgrading your LiveKit server version". On a
+venue's wifi that is a delay on every phone in the room, for nothing. Bump this
+pin with the vendored client, not separately.
 
 ### Session pipeline
 
