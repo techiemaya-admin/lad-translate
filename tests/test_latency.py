@@ -21,6 +21,73 @@ def test_unanchored_clock_refuses_to_guess():
         AudioClock().wall_for(1.0)
 
 
+def test_rebase_moves_the_epoch_where_anchor_will_not():
+    clock = AudioClock()
+    clock.anchor(t_audio=0.0, t_wall=500.0)
+    # The speaker went away for 900s: audio advanced 2s, wall advanced 902s.
+    clock.rebase(t_audio=2.0, t_wall=1402.0)
+    assert clock.wall_for(2.0) == 1402.0
+
+
+def test_rebase_reports_how_far_the_clock_had_fallen_behind():
+    clock = AudioClock()
+    clock.anchor(t_audio=0.0, t_wall=500.0)
+    assert clock.rebase(t_audio=2.0, t_wall=1402.0) == pytest.approx(900.0)
+
+
+def test_rebase_on_a_fresh_clock_reports_no_correction():
+    """Nothing was wrong yet, so there is no gap to attribute to the publisher."""
+    assert AudioClock().rebase(t_audio=0.0, t_wall=500.0) == 0.0
+
+
+def test_latency_after_a_gap_is_the_real_one_not_the_gap():
+    """
+    The bug this exists for: a phone that left and rejoined 16 minutes later
+    made every subsequent chunk report ~965s, while translate and TTS were
+    measured in tens of milliseconds.
+    """
+    rec = LatencyRecorder(slo_seconds=2.0)
+    rec.clock.anchor(t_audio=0.0, t_wall=1000.0)
+
+    # Speaker vanishes; audio reaches 2.0s only 900s later.
+    rec.clock.rebase(t_audio=2.0, t_wall=1900.0)
+    rec.open_chunk(0, "fr", t_audio_end=3.0)
+    rec.mark(0, "fr", Stage.COMMITTED, 1901.2)
+    rec.mark(0, "fr", Stage.TRANSLATED, 1901.3)
+    rec.mark(0, "fr", Stage.TTS_FIRST_AUDIO, 1901.5)
+    rec.mark(0, "fr", Stage.PUBLISHED, 1901.6)
+
+    stats = rec.stats("fr")
+    assert stats.p50 == pytest.approx(0.6)
+    assert not stats.breached(2.0), "the gap must not be charged to the pipeline"
+
+
+def test_publish_mark_returns_this_chunks_latency():
+    """
+    The per-chunk figure is only available at the moment the trace closes, and
+    the transcript row needs exactly that rather than the session's running p50.
+    """
+    rec = _recorder()
+    rec.open_chunk(0, "fr", t_audio_end=10.0)
+    assert rec.mark(0, "fr", Stage.COMMITTED, 1010.4) is None
+    assert rec.mark(0, "fr", Stage.PUBLISHED, 1010.9) == pytest.approx(0.9)
+
+
+def test_publish_mark_returns_each_chunks_own_latency_not_an_average():
+    rec = _recorder()
+    rec.open_chunk(0, "fr", t_audio_end=10.0)
+    rec.mark(0, "fr", Stage.PUBLISHED, 1014.0)
+    rec.open_chunk(1, "fr", t_audio_end=20.0)
+    second = rec.mark(1, "fr", Stage.PUBLISHED, 1020.5)
+
+    assert second == pytest.approx(0.5), "a spike-free series means the median leaked in"
+    assert rec.stats("fr").p50 == pytest.approx(2.25)
+
+
+def test_mark_for_an_unknown_chunk_returns_none():
+    assert _recorder().mark(99, "fr", Stage.PUBLISHED, 1000.0) is None
+
+
 def _recorder() -> LatencyRecorder:
     rec = LatencyRecorder(slo_seconds=2.0)
     rec.clock.anchor(t_audio=0.0, t_wall=1000.0)

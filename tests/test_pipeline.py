@@ -72,6 +72,135 @@ async def test_outcome_reports_status_and_summaries():
     assert outcome.failure_reason is None
     assert set(outcome.drift) == {"fr", "de"}
     assert "frames_in" in outcome.backlog
+    assert outcome.source_gaps == 0
+
+
+# --- source stream continuity -----------------------------------------------
+#
+# t_audio counts samples that arrived. A speaker who mutes, backgrounds the page
+# or rejoins produces none, so the audio clock falls behind wall time and every
+# later phrase reports a latency equal to the gap. Measured on a real phone: a
+# 16 minute absence made every chunk report 965s while TTS took 46ms.
+
+
+async def _drive_clock(session, frames):
+    """Run the frame stream through the session's clock stage."""
+    return [frame async for frame in session._anchor_clock(_aiter(frames))]
+
+
+async def _aiter(items):
+    for item in items:
+        yield item
+
+
+def _frame(t_audio: float, t_wall: float):
+    from lad_translate.adapters.base import AudioFrame
+
+    return AudioFrame(b"\x00\x00" * 160, 16_000, t_audio, t_wall)
+
+
+class _PhrasesStt:
+    """Emits several complete phrases, so the session produces several chunks.
+
+    FakeStt scripts one sentence being revised, which commits exactly once.
+    """
+
+    name = "fake-stt"
+
+    def __init__(self, phrases: list[str], gap: float = 0.05) -> None:
+        self._phrases = phrases
+        self._gap = gap
+
+    @property
+    def required_sample_rate(self) -> int:
+        return 16_000
+
+    @property
+    def emits_interims(self) -> bool:
+        return True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        return None
+
+    async def transcribe(self, frames):
+        import time
+
+        from lad_translate.adapters.base import Hypothesis
+
+        async for _ in frames:
+            break
+        wall = time.monotonic()
+        for i, text in enumerate(self._phrases):
+            yield Hypothesis(
+                text=text,
+                is_final=True,
+                t_audio_start=float(i),
+                t_audio_end=float(i + 1),
+                t_wall=wall + i * self._gap,
+                seq=i,
+            )
+            await asyncio.sleep(self._gap)
+
+
+async def test_clock_anchors_on_the_first_frame_not_session_start():
+    session, *_ = build()
+    session._started_at = 0.0
+    await _drive_clock(session, [_frame(0.0, 200.0), _frame(0.02, 200.02)])
+    assert session.recorder.clock.wall_for(0.0) == 200.0
+    assert session._source_gaps == 0
+
+
+async def test_a_break_in_the_source_re_anchors_the_clock():
+    session, *_ = build()
+    session._started_at = 0.0
+    await _drive_clock(
+        session,
+        [
+            _frame(0.00, 100.00),
+            _frame(0.02, 100.02),
+            # Speaker gone for 900s: audio advanced 20ms, wall advanced 900s.
+            _frame(0.04, 1000.02),
+        ],
+    )
+    assert session._source_gaps == 1
+    assert session.recorder.clock.wall_for(0.04) == 1000.02, "clock still behind the speaker"
+
+
+async def test_running_late_is_not_mistaken_for_a_break():
+    """
+    Real latency must survive. Being behind is reported as the latency it is;
+    only a genuine discontinuity is forgiven.
+    """
+    session, *_ = build()
+    session._started_at = 0.0
+    await _drive_clock(
+        session,
+        [
+            _frame(0.0, 100.0),
+            # 2s late on 1s of audio: over the SLO, well under the gap threshold.
+            _frame(1.0, 103.0),
+        ],
+    )
+    assert session._source_gaps == 0
+    assert session.recorder.clock.wall_for(1.0) == 101.0, "2s of real lag was erased"
+
+
+async def test_audio_arriving_in_a_burst_is_not_a_break():
+    """
+    When the pipeline is behind, frames queue upstream and then arrive faster
+    than real time. Audio outruns wall time, which is the opposite sign, and
+    must never re-anchor.
+    """
+    session, *_ = build()
+    session._started_at = 0.0
+    await _drive_clock(
+        session,
+        [_frame(0.0, 100.0), _frame(10.0, 100.5), _frame(20.0, 101.0)],
+    )
+    assert session._source_gaps == 0
 
 
 # --- ordering and independence ----------------------------------------------
@@ -226,6 +355,59 @@ async def test_a_storage_failure_does_not_kill_the_session():
     outcome = await session.run()
     assert outcome.status == "ended"
     assert room.published["de"]
+
+
+async def test_transcripts_store_each_chunks_own_latency():
+    """
+    `latency_s` sits on a per-chunk row and used to hold the session's running
+    p50, so the column could never show a spike and an e2e run read back as a
+    smooth decline from 8.777 to 1.688 that no chunk had actually taken.
+    """
+
+    class RecordingStore:
+        def __init__(self):
+            self.rows = []
+
+        async def mark_live(self, session_id):
+            return None
+
+        async def record_transcript(self, session_id, row):
+            self.rows.append(row)
+
+        async def end_session(self, session_id, failure_reason=None):
+            raise LookupError("not under test")
+
+    from lad_translate.obs.latency import Stage
+
+    store = RecordingStore()
+    # Several separate phrases, so the chunks have genuinely different
+    # latencies. The default script is one sentence revised three times and
+    # commits once, and against a single sample the running p50 IS that
+    # sample's value, so the two behaviours are indistinguishable.
+    session, *_ = build(store=store, stt=_PhrasesStt(["First phrase.", "Second one.", "And a third."]))
+
+    # Record what the recorder reported for each chunk as it closed, which is
+    # the only moment the per-chunk figure exists.
+    measured: dict[tuple[int, str], float | None] = {}
+    real_mark = session.recorder.mark
+
+    def spy(chunk_id, language, stage, t_wall):
+        result = real_mark(chunk_id, language, stage, t_wall)
+        if stage is Stage.PUBLISHED:
+            measured[(chunk_id, language)] = result
+        return result
+
+    session.recorder.mark = spy
+    await session.run()
+
+    stored = {(r.chunk_id, r.language): r.latency_s for r in store.rows}
+    assert stored, "no transcripts were written"
+    assert measured, "no chunk was published"
+    for key, value in measured.items():
+        assert key in stored, f"chunk {key} published but never persisted"
+        assert stored[key] == value, (
+            f"chunk {key} stored {stored[key]} but actually took {value}"
+        )
 
 
 async def test_session_applies_the_measured_table_per_language():

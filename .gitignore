@@ -17,6 +17,7 @@ fixtures/qr*.png
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 .DS_Store
 
 # Real credentials never belong here. The demo uses LiveKit's published

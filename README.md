@@ -8,31 +8,61 @@ speaker, translation quality does not matter.
 
 ## Status
 
-Foundation and the highest-risk component are built and tested. Nothing is wired
-to a room yet.
+Working end to end on CPU. A phone publishes, phones listen, and the audience
+hears translated speech in three languages. 388 tests, and `tools/e2e.py` passes
+13 of 13 on an 8-core box.
+
+The remaining ceiling is STT: Whisper is a 30 second window model and this is a
+live pipeline, which is why every number below carries a caveat and why the
+A4000 work is a streaming transducer rather than a bigger Whisper.
 
 | Component | State |
 |---|---|
 | Adapter contracts (`adapters/base.py`) | Done |
-| Phrase chunker (`chunker/`) | Done, 21 tests |
+| Phrase chunker (`chunker/`) | Done, 33 tests |
 | Structured logging (`obs/log.py`) | Done |
-| Latency instrumentation (`obs/latency.py`) | Done, 9 tests |
+| Latency instrumentation (`obs/latency.py`) | Done, 16 tests |
 | Chunker tuning harness (`tools/chunker_replay.py`) | Done |
-| Translation, Opus-MT (`adapters/mt_opus.py`) | Done, 7 tests |
+| Translation, Opus-MT (`adapters/mt_opus.py`) | Done, 18 tests |
+| Translation, NLLB-200 (`adapters/mt_nllb.py`) | Done, 8 tests; GPU backend |
+| Translation routing (`adapters/mt_routing.py`) | Done, 20 tests |
 | TTS, Piper (`adapters/tts_piper.py`) | Done, 7 tests |
 | STT, faster-whisper (`adapters/stt_whisper.py`) | Done, dev only |
-| Backend registry (`adapters/registry.py`) | Done |
-| End to end smoke test (`tools/pipeline_smoke.py`) | Done |
-| Session config and tenancy (`config.py`) | Done |
+| Hallucination filtering (`is_hallucination`) | Done, 74 tests |
+| Backend registry (`adapters/registry.py`) | Done, 9 tests |
+| Session config and tenancy (`config.py`) | Done, 13 tests |
 | Backpressure guard (`session/backpressure.py`) | Done, 11 tests |
-| Tenancy and schema resolution (`db/tenancy.py`) | Done, 18 tests |
+| Tenancy and schema resolution (`db/tenancy.py`) | Done, 19 tests |
 | Session data model (`db/`) | Done, 18 tests |
-| Drift control (`session/drift.py`) | Done, 15 tests |
+| Drift control (`session/drift.py`) | Done, 24 tests |
 | Room transport (`session/room.py`) | Done |
-| Session pipeline (`session/pipeline.py`) | Done, 15 tests |
+| Session pipeline (`session/pipeline.py`) | Done, 23 tests |
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
-| Browser join page | Done, 38 tests |
-| Streaming STT adapter (FastConformer) | Written, unrun; 35 tests on the frame arithmetic |
+| Browser join and speak pages | Done, 28 tests |
+| Phone as the speaker (TLS, QR, mic capture) | Done, verified on a real handset |
+| End to end verification (`tools/e2e.py`) | Done, 13 of 13 |
+| Provisioning, POSIX (`tools/bootstrap.sh`) | Done |
+| Provisioning, Windows (`tools/*.ps1`) | Done, demo verified |
+| Streaming STT adapter (FastConformer) | Written, unrun; 37 tests on the frame arithmetic |
+| GPU backends (Qwen3-ASR, Chatterbox) | Written, unrun; 20 tests |
+
+### Fixed after running it against a real phone
+
+Everything here was found by using the thing, not by reading it, and each one
+has its own section below with the measurement behind it.
+
+| Fault | Symptom | Fix |
+|---|---|---|
+| Audio clock never re-anchored | A speaker who paused made every later chunk report the length of the pause as latency, `slo_breach` for the rest of the session | `AudioClock.rebase` on a detected gap; `anchor` still set-once so publisher drift stays visible |
+| `latency_s` held a session aggregate | A per-chunk column stored the running p50, so it could never show a spike | `mark()` returns the chunk's own glass-to-glass at the moment the trace closes |
+| Whisper invented broadcast sign-offs | "I will meet you in the next episode" spoken to a live audience | Matched by shape, not string, and ungated: a farewell plus a broadcast noun has no innocent reading in this room |
+| Whisper decoder looped | "I'm Cassie, I'm Cassie, I'm Cassie." | `is_repetition_loop`: one clause of 2+ words filling 60% of the segment, split on commas as well as full stops |
+| Nothing enforced the confidence floor | `log_prob_threshold=-1.0` was passed to Whisper, which uses it for temperature fallback and not to discard | `LOG_PROB_FLOOR`, the same constant, enforced on the result |
+| Energy gate tuned for a fixture | Background noise at 0.008–0.037 cleared a 0.006 gate, and a model asked about noise answers with words | `LIVE_SPEECH_RMS = 0.05` for every tool that drives a session, overridable per venue |
+
+The last one is the one that mattered. The four filters above it each catch a
+symptom; the gate stops the model being asked in the first place, and a buffer
+that never reaches it cannot invent anything at all.
 
 ## Measured on the dev Mac
 
@@ -71,6 +101,79 @@ Run the tests:
 ```bash
 .venv/bin/python -m pytest tests/ -q
 ```
+
+That is enough for the tests and the offline tools. Running the thing needs a
+database, an SFU and the models as well, and `tools/bootstrap.sh` provisions all
+of it:
+
+```bash
+./tools/bootstrap.sh
+./tools/demo.sh up
+```
+
+`bootstrap.sh` creates the venv with the CPU backend extras, finds a Postgres 16
+installation and initialises the cluster under `.local/pgdata`, builds
+`livekit-server` from source into `.local/`, and fetches the translation models
+and voices. It is idempotent, so it is safe to run again after fixing whatever
+it complained about. `--no-models` skips the several hundred MB of downloads;
+`--recreate-db` throws the cluster away and rebuilds it.
+
+`demo.sh up` then prints a `http://127.0.0.1:8080/s/<session>` URL. Open it,
+tap a language, and you are listening. `demo.sh down` stops everything.
+
+Postgres is the one thing bootstrap will not install for you, because doing so
+needs a package manager and admin rights. On macOS `brew install postgresql@16`,
+on Debian or Ubuntu `apt install postgresql-16`; the EnterpriseDB tarball
+unpacked into `.local/pgsql` also works, and is what the dev Mac uses.
+
+### Windows
+
+Everything under `src/` and `tools/*.py` is portable and the test suite passes
+unchanged. The `.sh` scripts above are not, and `bootstrap.sh` is the one that
+matters: it needs a package manager, a Go toolchain and the client programs
+Postgres ships on Unix. The PowerShell counterparts do the same jobs.
+
+```powershell
+.\tools\bootstrap.ps1
+.\tools\demo.ps1 up
+```
+
+`bootstrap.ps1` builds the venv with the CPU backend extras, unpacks a Postgres
+16 server tree into `.local\pgsql` and initialises the cluster, installs
+`livekit-server.exe`, seeds the tenant and fetches the models. Like its shell
+counterpart it is idempotent, so it is safe to run again after fixing whatever
+it complained about. `-NoModels` skips the downloads; `-RecreateDb` throws the
+cluster away and rebuilds it. `pg.ps1`, `livekit.ps1` and `demo.ps1` then take
+the same subcommands as the `.sh` versions.
+
+Three things differ from the shell version, and each is forced by the platform
+rather than chosen.
+
+**LiveKit is downloaded, not built.** The project publishes Windows release
+binaries, so there is no Go toolchain and none of the `CGO_ENABLED=1`
+go-osstat problem that the macOS build has to work around. The version pin
+still tracks the vendored client, for the reason given under LiveKit below.
+
+**Postgres is downloaded, not found.** The shell script hunts for an existing
+installation because Homebrew and apt put one there. On Windows the installer
+wants admin rights, and `get.enterprisedb.com` was not reachable from this
+network at all — every request timed out, HEAD and GET alike. The binaries come
+from the `embedded-postgres` build on Maven Central instead, which is a plain
+server tree that unpacks and runs in place with no installer and no admin.
+
+**There is no `psql`.** That build ships the server — `initdb`, `pg_ctl`,
+`postgres` — and none of the client programs, so there is no `psql`,
+`createdb` or `pg_isready` to call. `tools/pg_admin.py` does those three jobs
+over asyncpg, which is already a dependency, rather than adding a client
+package that has to be installed separately. `pg.ps1 sql "SELECT ..."` is the
+`pg.sh psql` equivalent.
+
+One smaller difference worth knowing. `demo.sh` finds its background processes
+again with `pkill -f session_live.py`, matching on the command line, and there
+is no such thing here. `demo.ps1` writes each child's id to a pidfile under
+`.local\` and checks it against the process's real command line before killing
+anything: Windows reuses process ids, and killing whatever inherited one is
+worse than leaving a stale pidfile behind.
 
 ## Tuning the chunker
 
@@ -342,6 +445,26 @@ export LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET
 ```
 
 `--dev` uses the well-known devkey/secret pair. Local development only.
+
+`tools/bootstrap.sh` builds it, pinned to v1.13.6. Two things about that pin.
+
+It is cloned and built rather than `go install`ed. From v1.10 the module's
+go.mod carries replace directives, and `go install module@version` refuses
+those outright: "It must not contain directives that would cause it to be
+interpreted differently than if it were the main module". Inside a checkout it
+IS the main module, so the same build works.
+
+The version has to keep up with the vendored client. livekit-client 2.22.0
+signals on `/rtc/v1` and falls back to `/rtc` when the server answers 404, so
+an older server still works -- v1.9.1 does -- but every join pays a failed
+WebSocket handshake first, and the console says
+"v1 RTC path not found. Consider upgrading your LiveKit server version". On a
+venue's wifi that is a delay on every phone in the room, for nothing. Bump this
+pin with the vendored client, not separately.
+
+None of the build applies on Windows, where the project ships a release binary
+and `tools/bootstrap.ps1` downloads it. The pin still tracks the client for the
+same reason.
 
 ### Session pipeline
 
@@ -1056,6 +1179,35 @@ p95 latency reaches 42s against a p50 near 7s. That tail is the backlog guard
 shedding and recovering, and it is another reason the numbers here describe the
 hardware rather than the design.
 
+### 13 of 13 on a machine with cores to spare
+
+Same tool, same fixture, same two languages, on an 8-core Ryzen 7 7735HS with
+16GB and no GPU — against the dev Mac's two Haswell cores.
+
+| | dev Mac (2 cores) | Ryzen (8 cores) |
+|---|---|---|
+| checks passed | 12 of 13 | **13 of 13** |
+| audio shed | 37–52% | 14% |
+| p50 latency | ~7s | **1.69s (fr), 1.83s (ar)** |
+| p95 latency | 42s | 12.2s |
+| transcript accuracy | failed | WER 32.2%, passed |
+| wall clock | — | 152s for a 98s source |
+
+The one check that never passed on the dev Mac passes here, and it passes for
+the reason the failure was always attributed to: that box shed the words before
+they could reach the transcript, and this one mostly does not.
+
+Two things this does NOT mean. p50 under two seconds is not the product
+latency, because Whisper is not a streaming model and the tool says so on every
+run; the p95 of 12.2s is the same backlog guard shedding and recovering, and it
+is still six times the budget. And a single run is a single run — the section
+above about capacity numbers from one box not being reproducible applies
+exactly as much to this one.
+
+What it does establish is that the 12-of-13 result was a hardware ceiling and
+not a defect. Four more cores moved it. The remaining gap is the STT
+architecture, which is what the A4000 work is for.
+
 ## Speaking into it from a phone
 
 No microphone hardware needed. One phone is the speaker, another is the
@@ -1143,6 +1295,243 @@ directly rather than by trying to reproduce the audio that triggers it — none
 of the synthetic silence, hum or breath conditions I tried would reproduce it,
 because a phone in a real room carries far more speech-like structure than
 Gaussian noise does.
+
+### Four more got through, and why
+
+A later session on a real phone put these into the transcript, translated and
+spoken to the room:
+
+    I'll see you later.
+    I hope you enjoyed this video. Thanks.
+    And I hope you enjoyed this video. I hope you enjoyed this video.
+    I'll see you next time.
+
+The blocklist held `thanks for watching and see you next time.` and matched it
+against the raw string, so none of the four hit it. Two were simply absent, one
+carried a second sentence, and one was the phrase looped.
+
+Three changes, and the constraint that shaped all of them is that matching stays
+**whole-segment**. A substring test would delete "Thank you all for coming to
+the summit today", which is a real thing a chair says, so that is not available.
+
+**The segment and the list are normalised the same way** — lowercased,
+whitespace collapsed, surrounding punctuation dropped. `Thank you.` and
+`THANK YOU!` no longer need their own entries, and the list shrank while
+covering more.
+
+**A multi-sentence segment matches only if EVERY sentence is stock.** That
+catches "I hope you enjoyed this video. Thanks." without ever matching a stock
+phrase buried inside real speech.
+
+**A looped phrase is a hallucination whatever the words are.** Whisper repeats
+one phrase for a whole window when it has nothing to work with, and that shape
+is the signal, which is what makes it worth testing separately from the list: it
+catches loops nobody has seen yet. Repeats shorter than three words are exempt,
+because "No. No. No." is real speech.
+
+A leading `and`/`so`/`well`/`um` is stripped before lookup, since Whisper prefixes
+its stock phrases often enough to miss a list holding the phrase itself. That
+cannot turn a real sentence into a stock one: what remains still has to match in
+full.
+
+All four are still spoken to the audience when the segment is confidently heard.
+The gate is unchanged — the phrase counts as evidence only once
+`no_speech_prob` or `avg_logprob` already says the segment is doubtful.
+
+### Then a listener heard one anyway, and the list was the wrong tool
+
+From a live phone session, in the middle of someone reading a device manual
+aloud:
+
+    This is the end of the day, and I will meet you in the next episode.
+
+On no list, and it never would have been: Whisper paraphrases this family
+freely. The same session also produced "I'll see you on my next video." and
+"I will see you on my next video.", which are the same sentence twice and
+neither is a string anyone would have thought to add.
+
+More importantly the confidence gate did not stop it either. That gate exists
+because "thank you" is ambiguous, and it is the right design for an ambiguous
+phrase. A reference to the next episode is not ambiguous: the speaker is
+addressing a hall through an interpreter, and there is no reading of it that
+should reach an audience. It got through **because** the model was confident.
+
+So there are now two tiers.
+
+**Ambiguous phrases stay gated.** "Thank you", "bye", "okay", "I'll see you
+later" — real things people say, dropped only when the segment already looks
+like non-speech.
+
+**Broadcast sign-offs are dropped on the words alone**, at any confidence. The
+test is a shape rather than a string: a farewell (`see you`, `meet you`,
+`catch you`, `until next`) in the same sentence as a broadcast noun (`video`,
+`episode`, `channel`, `stream`, `podcast`, `tutorial`), or an invitation to
+subscribe, like, or enjoy a video.
+
+Both halves are required, which is what keeps it from eating real speech.
+"Let's watch the video now", "The next episode of this series airs in March",
+"I'll see you at lunch" and "See you in the main hall after the break" all
+survive, because each has only one half.
+
+Replayed against every transcript this system has produced — 497 distinct
+chunks across eight sessions, including 45 seconds of JFK and two live phone
+sessions — the rule suppresses 5 and touches nothing else. The Whisper
+mistranscriptions "Watch has been passed" and "Watch us in past" are kept, as
+they should be.
+
+Kept segments now log their `no_speech_prob` and `avg_logprob` at DEBUG
+alongside suppressed ones. Only suppressions were logged before, so when one of
+these reached an audience there was no way to tell afterwards whether it had
+slipped past a gate or was never doubted at all — which is the first question
+asked every time, and it could not be answered for this one.
+
+### And then the decoder looped, which is a different fault again
+
+A later live session produced these, none of them a sign-off and none on any
+list:
+
+    I'm Cassie, I'm Cassie, I'm Cassie.
+    I guess you'll. I guess you'll. I guess you'll.
+    I love you. I love you, I love you. I love you, I love you.
+    Mehtun Sibya Arkanda. Mehtun Sibya Arkanda. Mehtun Sibya Arkanda. Mehtun.
+
+There WAS a loop check by then, and it missed all four, for three separate
+reasons worth writing down because each looked reasonable when written.
+
+It split on `.!?` only, so `I'm Cassie, I'm Cassie, I'm Cassie.` was one
+sentence with nothing repeated in it. It required every sentence to be
+identical, so a trailing `Mehtun.` defeated it. And it sat behind the confidence
+gate, which these had already cleared.
+
+`is_repetition_loop()` replaces it. Clauses are split on commas and semicolons
+as well as sentence punctuation, and a segment is a loop when one clause of two
+or more words appears at least three times AND fills at least 60% of the
+clauses. Ungated, for the same reason as the sign-offs: these arrived with every
+confidence signal happy, and `compression_ratio_threshold=2.4` is supposed to
+catch exactly this inside the model and demonstrably did not.
+
+The 60% share is what separates a loop from speech that merely repeats.
+"Hello, how are you? I'm quick, how are you?" repeats two clauses of four and is
+kept — it came from the same session. Single words are exempt however often they
+repeat, because "No, no, no" is a thing people say and mean.
+
+Replayed over every chunk this system has produced — 506 distinct — the two
+ungated rules suppress 10 between them, 5 loops and 5 sign-offs, and keep 496.
+A sweep of everything kept found nothing left carrying a repeated clause.
+
+### The words were the wrong thing to look at
+
+Three rounds of text rules, and a listener still heard invented sentences over
+silence. With the kept segments finally logging their signals, the reason is
+plain, and it is not something any phrase list reaches:
+
+| avg_logprob | invented | | avg_logprob | real |
+|---|---|---|---|---|
+| -1.431 | Me too? | | -0.877 | Hello. |
+| -1.331 | I'll explain it to you. | | -0.752 | Bye bye. |
+| -1.284 | Matthew. | | -0.632 | or you do it. |
+| -1.207 | or you'll be sick of it. | | -0.630 | and all good morning. |
+| -1.098 | Alvin Dab. | | -0.594 | At the main. |
+| -1.014 | more kebab | | -0.580 | I'll think that. |
+
+`no_speech_prob` was **useless**: 0.013 to 0.318 on the invented text. The model
+was confident it had heard speech and merely unsure which words, which is why
+the "confidently non-speech" branch never fired once. Every one of these is a
+novel phrase; no list would ever have held "Alvin Dab" or "more kebab".
+
+`avg_logprob` separates them, and the threshold was already in the file.
+`log_prob_threshold=-1.0` is passed to Whisper, where it governs whether to
+retry at a higher temperature — never whether to use the result. The floor was
+declared and nothing enforced it. `LOG_PROB_FLOOR` now does, and the same
+constant is handed to the model so the two cannot drift apart.
+
+The cost is real and worth stating. Replayed over the session that prompted it,
+10 of 24 segments that reached the audience are now dropped, and the ten include
+"I think that's the reason why I'm here" — plausibly something the speaker said.
+On a backend measured at 14.8% WER streaming, a segment the model itself rates
+below its own floor was unlikely to survive translation intact, and a gap is
+better than a confident invention. Nothing previously suppressed is now allowed
+through.
+
+Buffer RMS is logged at DEBUG on both sides of the energy gate. That gate is an
+absolute threshold on a signal whose floor depends on the microphone and the
+room, so `speech_rms` cannot be tuned for a venue without seeing what the
+buffers there actually measured.
+
+### The gate is a venue setting, not a constant
+
+With that logging on, a listener reported the pipeline inventing phrases while
+nobody spoke, and guessed it was picking up background noise. It was. Measured
+over one live session on a phone, 6s buffers, float32 RMS:
+
+| | RMS |
+|---|---|
+| skipped by the gate (n=53) | median **0.00025** |
+| sent to Whisper (n=32) | median **0.088** |
+| quietest ones still sent | 0.0076, 0.0137, 0.0152, 0.0252, 0.0371 |
+| next ones up | 0.0672, 0.0676, 0.0683, 0.0700 … |
+
+True silence is 24x below the gate and correctly skipped, so the gate works.
+Background noise — movement, distant voices, handling the phone — sits at
+**0.008 to 0.037**, and the gate is **0.006**, so all of it reached the model.
+Speech starts at 0.067. Nothing at all falls between 0.037 and 0.067.
+
+The obvious move is to raise the default into that gap, and it is wrong:
+
+| | RMS |
+|---|---|
+| `fixtures/holmes.wav` | **0.029 – 0.050** |
+| `fixtures/jfk.wav` | 0.059 – 0.113 |
+| `fixtures/keynote.wav` | 0.113 – 0.183 |
+
+`holmes.wav` is quiet narration and it lands **inside** the phone's noise band.
+A gate set to keep this room's noise out would silence the one fixture with
+published ground truth, which is what every WER figure here is scored against.
+One room's noise floor is another recording's speech.
+
+So `speech_rms` is a deployment setting, and there are two defaults because
+there are two situations.
+
+`WhisperSttAdapter.DEFAULT_SPEECH_RMS` stays at **0.006**. That is the library
+default, and it is the one a recorded fixture needs.
+
+`WhisperSttAdapter.LIVE_SPEECH_RMS` is **0.05**, and it is what every tool that
+drives a session uses: `serve_session.py`, `session_live.py`, and both `demo`
+scripts. It sits in the empty band between this room's noise and its speech.
+Confirmed live: after the change, 79 buffers were skipped and 26 transcribed,
+every one of the 26 at or above 0.056, and the invented phrases stopped.
+
+Override it anywhere it is wrong:
+
+```bash
+python tools/serve_session.py --speech-rms 0.006     # a quiet speaker
+SPEECH_RMS=0.006 ./tools/demo.sh up                   # scoring holmes.wav
+```
+
+```powershell
+$env:SPEECH_RMS='0.006'; .\tools\demo.ps1 up
+```
+
+**`fixtures/holmes.wav` needs that override.** It is quiet narration at
+0.029–0.050, below the live gate, so a run scored against it must lower the
+threshold or it will transcribe nothing at all. `jfk.wav` at 0.059–0.113 and
+`keynote.wav` at 0.113–0.183 both clear it, which is why the demo's own default
+source is unaffected.
+
+Tune it by running with `LOG_LEVEL=DEBUG`, speaking, then staying silent, and
+reading the `transcribing buffer` and `buffer below the speech gate` lines. Put
+the threshold in the gap between the two populations. If there is no gap, the
+microphone is too far from the speaker and no threshold will fix it.
+
+The failure this value causes when set too high is a quiet speaker going silent
+with nothing in the transcript to explain it, which is why every tool that
+applies it also exposes a flag to lower it, and why the demo prints the gate it
+is running with.
+
+This matters more than the text rules that came before it. A buffer that never
+reaches the model cannot produce an invented phrase, a stock sign-off or a
+decoder loop, and it costs no CPU on a machine that sheds audio. Judging output
+is the fallback for what gets through.
 
 ## Stable room URLs
 

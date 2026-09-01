@@ -180,6 +180,16 @@ async def main() -> int:
     ap.add_argument("--emit-interval", type=float, default=3.0,
                     help="must exceed window_s * RTF or the backlog grows without bound")
     ap.add_argument("--window", type=float, default=6.0)
+    ap.add_argument(
+        "--speech-rms",
+        type=float,
+        default=WhisperSttAdapter.LIVE_SPEECH_RMS,
+        help=(
+            "refuse to transcribe a buffer quieter than this. The default suits "
+            "a live microphone and the louder fixtures; fixtures/holmes.wav is "
+            "quiet narration at 0.029-0.050 and needs --speech-rms 0.006"
+        ),
+    )
     ap.add_argument("--room", default=f"lad-{uuid.uuid4().hex[:8]}",
                     help="use an existing session's room to listen from a browser")
     ap.add_argument("--no-store", action="store_true",
@@ -272,7 +282,12 @@ async def main() -> int:
     # nothing subscribed to catch it: the SFU does not hold it for a
     # subscriber that has not arrived, so it is gone. On a 45 second clip
     # that silently discards most of the test.
-    async with WhisperSttAdapter(model_size=args.model, emit_interval=args.emit_interval, max_window_s=args.window) as stt, tts:
+    async with WhisperSttAdapter(
+        model_size=args.model,
+        emit_interval=args.emit_interval,
+        max_window_s=args.window,
+        speech_rms=args.speech_rms,
+    ) as stt, tts:
         pub_task = asyncio.create_task(
             venue_publisher(
                 url, issuer.for_publisher(args.room), args.audio,

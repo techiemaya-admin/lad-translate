@@ -52,8 +52,24 @@ class AudioClock:
     Maps a position in the source audio to the wall time it arrived.
 
     A live stream arrives in real time, so the mapping is a fixed offset. It is
-    established from the first frame and never adjusted, which means clock drift
-    on the publisher shows up in the latency figures rather than being hidden.
+    established from the first frame and never adjusted by `anchor`, which means
+    clock drift on the publisher shows up in the latency figures rather than
+    being hidden.
+
+    `rebase` is the deliberate exception, and it exists because a source track is
+    not always continuous. t_audio counts samples that arrived; if the speaker
+    mutes, backgrounds the page or drops off and rejoins, no samples are produced
+    and t_audio stalls while wall time does not. The offset established before
+    the gap then maps every later phrase to a wall time in the past, and every
+    one of them reports a latency equal to the gap, for the rest of the session.
+
+    Observed on a real phone: anchored at 04:27:21, the speaker left and rejoined
+    16 minutes later, and every subsequent chunk reported 965s glass-to-glass
+    with `stage_translate_s` 0.032 and `stage_tts_s` 0.046. The pipeline was
+    keeping up; only the mapping was wrong.
+
+    So drift is still never corrected, because drift is a real property of the
+    publisher worth seeing. A discontinuity is not drift, and is.
     """
 
     __slots__ = ("_epoch",)
@@ -65,6 +81,19 @@ class AudioClock:
         """Set the mapping from the first audio frame of the session."""
         if self._epoch is None:
             self._epoch = t_wall - t_audio
+
+    def rebase(self, t_audio: float, t_wall: float) -> float:
+        """
+        Re-establish the mapping after a break in the source stream.
+
+        Returns the size of the correction in seconds: how far behind wall time
+        the audio clock had fallen. That figure is the length of the gap, and it
+        is worth logging rather than discarding, because a source track that
+        keeps breaking is a fault in its own right.
+        """
+        previous = self._epoch
+        self._epoch = t_wall - t_audio
+        return 0.0 if previous is None else self._epoch - previous
 
     @property
     def anchored(self) -> bool:
@@ -170,17 +199,26 @@ class LatencyRecorder:
         self._open[(chunk_id, language)] = trace
         return trace
 
-    def mark(self, chunk_id: int, language: str, stage: Stage, t_wall: float) -> None:
+    def mark(self, chunk_id: int, language: str, stage: Stage, t_wall: float) -> float | None:
+        """
+        Record one stage for one chunk.
+
+        Returns this chunk's glass-to-glass latency when the PUBLISHED mark
+        closes it, and None otherwise. The trace is discarded on close, so this
+        is the only moment the figure can be read for a single chunk, and a
+        caller that wants to store it has to take it here.
+        """
         trace = self._open.get((chunk_id, language))
         if trace is None:
             log.warning(
                 "latency mark for unknown chunk",
                 extra={"chunk_id": chunk_id, "language": language, "stage": stage.value},
             )
-            return
+            return None
         trace.mark(stage, t_wall)
         if stage is Stage.PUBLISHED:
-            self._close(trace)
+            return self._close(trace)
+        return None
 
     def record_revision(self, chunk_id: int) -> None:
         """A committed chunk was later contradicted by the STT backend."""
@@ -189,10 +227,10 @@ class LatencyRecorder:
 
     # -------------------------------------------------------------------------
 
-    def _close(self, trace: ChunkTrace) -> None:
+    def _close(self, trace: ChunkTrace) -> float | None:
         g2g = trace.glass_to_glass
         if g2g is None:
-            return
+            return None
         self._append(self._g2g[trace.language], g2g)
         for label, seconds in trace.breakdown().items():
             self._append(self._stages[trace.language][label], seconds)
@@ -211,6 +249,7 @@ class LatencyRecorder:
             },
         )
         self._open.pop((trace.chunk_id, trace.language), None)
+        return g2g
 
     def _append(self, target: list[float], value: float) -> None:
         target.append(value)

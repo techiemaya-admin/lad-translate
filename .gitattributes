@@ -1,0 +1,16 @@
+# Line endings are normalised to LF in the repository and on checkout, on every
+# platform. Git's Windows default is core.autocrlf=true, which rewrites files to
+# CRLF in the working tree; a shell script that arrives that way fails at the
+# shebang on Linux with "bad interpreter ... bash^M", and the tooling here is
+# developed on Windows and macOS and deployed on a Linux GPU box.
+#
+# Committed as a file rather than left to core.autocrlf so it holds for every
+# clone, including ones nobody configured.
+* text=auto eol=lf
+
+# Binary, and never to be touched.
+*.png binary
+*.wav binary
+*.onnx binary
+*.spm binary
+*.bin binary

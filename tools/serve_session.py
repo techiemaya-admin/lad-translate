@@ -51,6 +51,18 @@ async def main() -> int:
     ap.add_argument("--model", default="tiny")
     ap.add_argument("--emit-interval", type=float, default=3.0)
     ap.add_argument("--window", type=float, default=6.0)
+    ap.add_argument(
+        "--speech-rms",
+        type=float,
+        default=WhisperSttAdapter.LIVE_SPEECH_RMS,
+        help=(
+            "refuse to transcribe a buffer quieter than this. The default suits "
+            "a live microphone in a room, where background noise below it would "
+            "otherwise reach the model and come back as invented words. Lower it "
+            "for a quiet speaker or a recorded source, and confirm it from the "
+            "'transcribing buffer' rms values logged at DEBUG"
+        ),
+    )
     ap.add_argument("--wait", type=float, default=900.0,
                     help="seconds to wait for a speaker before giving up")
     args = ap.parse_args()
@@ -109,7 +121,10 @@ async def main() -> int:
     print("\n  waiting for a speaker...\n", flush=True)
 
     async with WhisperSttAdapter(
-        model_size=args.model, emit_interval=args.emit_interval, max_window_s=args.window
+        model_size=args.model,
+        emit_interval=args.emit_interval,
+        max_window_s=args.window,
+        speech_rms=args.speech_rms,
     ) as stt, tts:
         session = TranslationSession(
             config=config, room=room, stt=stt, mt=mt, tts=tts, store=store, max_lag_s=3.0

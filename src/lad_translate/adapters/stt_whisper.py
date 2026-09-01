@@ -20,7 +20,9 @@ streaming FastConformer, or Deepgram on-prem.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
+from collections import Counter
 from collections.abc import AsyncIterator
 from typing import Self
 
@@ -42,18 +44,150 @@ WHISPER_SAMPLE_RATE = SAMPLE_RATE_16K
 # in a session where nobody said either. Translated and spoken to an audience,
 # an invented politeness is worse than a gap.
 #
+# A later session on a real phone got four more past the gate, because the match
+# was exact against the raw string and these did not appear in it verbatim:
+#
+#     "I'll see you later."
+#     "I hope you enjoyed this video. Thanks."
+#     "And I hope you enjoyed this video. I hope you enjoyed this video."
+#     "I'll see you next time."
+#
+# All four were translated and spoken to the room. The list is stored normalised
+# now, and the segment is normalised the same way before it is looked up, so a
+# trailing full stop or an exclamation mark no longer needs its own entry.
+#
 # Matched only when the segment ALSO looks like non-speech. "Thank you" is a
 # real thing people say at a conference, and a blanket blocklist would delete
 # genuine speech to remove an artefact.
-HALLUCINATED_ON_SILENCE = frozenset(
-    {
-        "thank you.", "thank you", "thanks for watching!", "thanks for watching",
-        "thank you for watching.", "thank you for watching",
-        "thanks for watching and see you next time.",
-        "please subscribe to my channel.", "subtitles by the amara.org community",
-        "you", "bye.", "bye", "okay.", ".", "...",
-    }
+_STOCK_PHRASES = (
+    "thank you", "thanks", "thanks for watching", "thank you for watching",
+    "thanks for watching and see you next time", "see you next time",
+    "i'll see you next time", "see you later", "i'll see you later",
+    "you", "bye", "okay",
 )
+
+# The distinction the gate rests on is whether the words have an innocent
+# reading in THIS room. "Thank you" does, so it is only evidence when the
+# segment already looks doubtful. A reference to a video, an episode or a
+# channel does not: the speaker is addressing a hall through an interpreter,
+# not signing off a broadcast. Those are dropped on the words alone.
+#
+# Reported live, and the reason this tier exists: a phone heard
+# "This is the end of the day, and I will meet you in the next episode."
+# in the middle of someone reading a device manual aloud. It is not on any list
+# and never will be -- Whisper paraphrases these freely -- so matching the SHAPE
+# is the only thing that keeps up.
+_BROADCAST_NOUNS = r"(?:video|episode|channel|stream|livestream|vlog|podcast|tutorial)"
+_FAREWELL = r"(?:see|meet|catch|talk to)\s+(?:you|ya)|until\s+next|till\s+next|goodbye"
+
+# A farewell aimed at a broadcast audience. Both halves are required, so
+# "let's watch the video" and "I'll see you at lunch" both survive.
+_BROADCAST_OUTRO = re.compile(
+    rf"(?:{_FAREWELL})[^.!?]*\b{_BROADCAST_NOUNS}\b"
+    rf"|\b{_BROADCAST_NOUNS}\b[^.!?]*(?:{_FAREWELL})",
+    re.IGNORECASE,
+)
+
+# Inviting the audience to act on a video: subscribing, liking, hitting a bell,
+# enjoying it. Same reasoning -- no live speaker says these to a room.
+_BROADCAST_CALL = re.compile(
+    rf"\b(?:subscribe|like and subscribe|hit the bell)\b"
+    rf"|\b(?:hope|hoped)\s+you\s+(?:enjoyed|liked|enjoy)\b[^.!?]*\b{_BROADCAST_NOUNS}\b"
+    rf"|\bthanks?\s+(?:you\s+)?for\s+watching\b"
+    rf"|\bsubtitles?\s+by\b",
+    re.IGNORECASE,
+)
+
+
+def is_broadcast_artefact(text: str) -> bool:
+    """
+    Whether the words belong to a video sign-off rather than to this room.
+
+    Checked on the words alone, with no confidence gate, because unlike "thank
+    you" there is no reading of these that a live interpretation session should
+    ever carry to an audience.
+    """
+    return bool(_BROADCAST_OUTRO.search(text) or _BROADCAST_CALL.search(text))
+
+
+# Clause punctuation, not just sentence punctuation. Whisper's loops are as
+# often comma-separated as full-stopped, and splitting only on ".!?" reads
+# "I'm Cassie, I'm Cassie, I'm Cassie." as a single sentence with nothing
+# repeated in it.
+_CLAUSE_SPLIT = re.compile(r"[.!?,;:]+")
+
+LOG_PROB_FLOOR = -1.0
+"""Below this the model was guessing at the tokens, so the words mean nothing.
+
+The same value is passed to Whisper as `log_prob_threshold`, where it governs
+temperature fallback rather than whether the segment is used. Enforcing it here
+is what makes it a floor.
+"""
+
+LOOP_MIN_UNITS = 3
+LOOP_MIN_REPEATS = 3
+LOOP_MIN_WORDS = 2
+LOOP_SHARE = 0.6
+
+
+def _clauses(text: str) -> list[str]:
+    return [c for c in (_normalise(p) for p in _CLAUSE_SPLIT.split(text)) if c]
+
+
+def is_repetition_loop(text: str) -> bool:
+    """
+    Whether the decoder got stuck repeating one phrase.
+
+    Observed live, all four in one session, and none catchable by a phrase list:
+
+        I'm Cassie, I'm Cassie, I'm Cassie.
+        I guess you'll. I guess you'll. I guess you'll.
+        I love you. I love you, I love you. I love you, I love you.
+        Mehtun Sibya Arkanda. Mehtun Sibya Arkanda. Mehtun Sibya Arkanda. Mehtun.
+
+    The shape is one clause occupying most of the segment. Requiring it to fill
+    at least LOOP_SHARE of the clauses is what separates a loop from ordinary
+    speech that happens to repeat a phrase: "Hello, how are you? I'm quick, how
+    are you?" repeats "how are you" twice out of four clauses and is kept.
+
+    Single words are exempt however often they repeat, because "No, no, no" and
+    "Yes, yes, yes" are things people say and mean.
+
+    Ungated, like the broadcast sign-offs. `compression_ratio_threshold` is
+    meant to catch this inside the model and demonstrably did not, and these
+    reached an audience while every confidence signal was happy.
+    """
+    units = _clauses(text)
+    if len(units) < LOOP_MIN_UNITS:
+        return False
+    unit, count = Counter(units).most_common(1)[0]
+    if count < LOOP_MIN_REPEATS or len(unit.split()) < LOOP_MIN_WORDS:
+        return False
+    return count / len(units) >= LOOP_SHARE
+
+# Leading discourse particles. Whisper prefixes its stock phrases with these
+# often enough that "And I hope you enjoyed this video" would otherwise miss a
+# list that holds the phrase itself. Stripping one only ever exposes the rest of
+# the segment to the same whole-segment match; it never turns a real sentence
+# into a stock one, because what remains still has to match in full.
+_LEADING_FILLER = ("and", "so", "but", "well", "okay", "ok", "um", "uh", "oh")
+
+
+def _normalise(text: str) -> str:
+    """Lowercase, collapse whitespace, drop surrounding punctuation."""
+    cleaned = re.sub(r"\s+", " ", text).strip().lower()
+    cleaned = cleaned.strip(".,!?;:-\"'“”‘’ ")
+    words = cleaned.split(" ")
+    while len(words) > 1 and words[0] in _LEADING_FILLER:
+        words = words[1:]
+    return " ".join(words).strip()
+
+
+HALLUCINATED_ON_SILENCE = frozenset(_normalise(p) for p in _STOCK_PHRASES)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in (_normalise(p) for p in re.split(r"[.!?]+", text)) if s]
 
 
 def is_hallucination(text: str, no_speech_prob: float, avg_logprob: float) -> bool:
@@ -69,18 +203,78 @@ def is_hallucination(text: str, no_speech_prob: float, avg_logprob: float) -> bo
                        higher than text conjured from nothing.
       the phrase       only consulted when one of the above is already
                        suspicious, so genuine thanks survive.
+
+    Matching stays whole-segment. A substring test would delete "Thank you all
+    for coming to the summit today", which is a real thing a chair says, so a
+    segment of several sentences is matched by requiring EVERY sentence in it to
+    be stock rather than by looking for one anywhere inside.
+
+    Broadcast sign-offs are the exception and are dropped on the words alone.
+    The gate above exists because "thank you" is ambiguous; "I will meet you in
+    the next episode" is not, and it reached a live audience precisely because
+    the model was confident enough to clear every threshold here.
     """
-    stripped = text.strip().lower()
-    if not stripped:
+    stripped = text.strip()
+    if not _normalise(stripped):
         return True
 
     # Confidently non-speech: drop whatever it produced, whatever the words.
     if no_speech_prob > 0.8 and avg_logprob < -0.5:
         return True
 
-    # A stock phrase is only evidence when the segment is already doubtful.
-    return stripped in HALLUCINATED_ON_SILENCE and (
-        no_speech_prob > 0.5 or avg_logprob < -0.7
+    # Below the model's own confidence floor: it was guessing at the tokens.
+    #
+    # Measured in a live session where the speaker was silent, with every kept
+    # segment's signals logged. `no_speech_prob` was USELESS -- 0.013 to 0.318
+    # on invented text, so the branch above never fired -- while `avg_logprob`
+    # separated the two cleanly enough to act on:
+    #
+    #     -1.431  Me too?              -0.877  Hello.
+    #     -1.331  I'll explain it.     -0.752  Bye bye.
+    #     -1.284  Matthew.             -0.632  or you do it.
+    #     -1.207  or you'll be sick.   -0.630  and all good morning.
+    #     -1.098  Alvin Dab.           -0.594  At the main.
+    #     -1.014  more kebab           -0.580  I'll think that.
+    #
+    # The threshold is not a new invention: LOG_PROB_FLOOR is the same -1.0 this
+    # adapter already hands Whisper as `log_prob_threshold`, which the model uses
+    # to decide whether to retry at a higher temperature but never to discard.
+    # The floor was already declared; nothing was enforcing it.
+    #
+    # This does discard badly transcribed real speech as well. On a backend
+    # measured at 14.8% WER streaming, a segment the model itself rates this
+    # poorly was unlikely to survive translation intact, and a gap is better
+    # than a confident invention.
+    if avg_logprob < LOG_PROB_FLOOR:
+        return True
+
+    # A video sign-off is wrong in this room however confident the model is,
+    # and confidence is exactly what the earlier gate could not rely on: these
+    # reached a live audience while the model was sure enough to pass every
+    # threshold above. A decoder loop is the same case.
+    if is_broadcast_artefact(stripped) or is_repetition_loop(stripped):
+        return True
+
+    # Everything below is evidence only once the segment is already doubtful.
+    if not (no_speech_prob > 0.5 or avg_logprob < -0.7):
+        return False
+
+    if _normalise(stripped) in HALLUCINATED_ON_SILENCE:
+        return True
+
+    sentences = _sentences(stripped)
+    if sentences and all(s in HALLUCINATED_ON_SILENCE for s in sentences):
+        return True
+
+    # Whisper loops when it has nothing to work with, repeating one phrase for
+    # the whole window. That shape is a hallucination whatever the words are,
+    # which is what makes it worth testing separately from the list: it catches
+    # the loops nobody has seen yet. Short interjections are excluded because
+    # "no, no, no" and "yes, yes" are things people really say.
+    return (
+        len(sentences) > 1
+        and len(set(sentences)) == 1
+        and len(sentences[0].split()) >= 3
     )
 
 
@@ -88,6 +282,40 @@ class WhisperSttAdapter(SttAdapter):
     """Sliding window Whisper, emitting cumulative hypotheses on a timer."""
 
     name = "faster-whisper"
+
+    DEFAULT_SPEECH_RMS = 0.006
+    """Suits a recorded fixture, and is too low for a microphone in a room.
+
+    Measured, 6s buffers, float32:
+
+        fixtures/holmes.wav        0.029 - 0.050    quiet narration
+        fixtures/jfk.wav           0.059 - 0.113
+        a phone, speaker silent    0.0002           true silence
+        a phone, background noise  0.008 - 0.037    movement, distant voices
+        a phone, speaker talking   0.067 - 0.125
+
+    There is no single value that serves both. A gate above the phone's noise
+    band would silence holmes.wav, which is the fixture the WER numbers are
+    scored against; a gate below it hands the model noise to invent words from.
+    One room's noise floor is another recording's speech, so this is a
+    deployment setting rather than a constant, and the library default stays
+    where the fixtures need it. The tools that drive a live microphone default
+    to LIVE_SPEECH_RMS instead.
+    """
+
+    LIVE_SPEECH_RMS = 0.05
+    """What the tools use, and what a live microphone in a room needs.
+
+    Sits in the empty band between the phone's background noise, which topped
+    out at 0.037, and its speech, which started at 0.067. Measured in one room
+    on one handset: it is a better starting point than 0.006 for a live mic and
+    it is still a starting point. Confirm it per venue from the `transcribing
+    buffer` and `buffer below the speech gate` lines at DEBUG.
+
+    Too high and a quiet speaker goes silent with nothing in the transcript to
+    explain it, which is the failure this value can cause and the reason every
+    tool that applies it also exposes a flag to lower it.
+    """
 
     def __init__(
         self,
@@ -99,7 +327,7 @@ class WhisperSttAdapter(SttAdapter):
         max_window_s: float = 8.0,
         silence_rms: float = 0.005,
         silence_duration_s: float = 0.7,
-        speech_rms: float = 0.006,
+        speech_rms: float = DEFAULT_SPEECH_RMS,
         vad_threshold: float = 0.5,
     ) -> None:
         self.model_size = model_size
@@ -250,9 +478,22 @@ class WhisperSttAdapter(SttAdapter):
         buffer = self._buffer.copy()
 
         # Do not ask the model about silence.
+        #
+        # The level is logged either way. This gate is an absolute threshold on
+        # a signal whose floor depends on the microphone and the room, so the
+        # only way to know whether it is set right for a given venue is to see
+        # what the buffers actually measured there.
         level = float(np.sqrt(np.mean(np.square(buffer))))
         if level < self.speech_rms:
+            log.debug(
+                "buffer below the speech gate, not transcribed",
+                extra={"rms": round(level, 5), "gate": self.speech_rms},
+            )
             return ""
+        log.debug(
+            "transcribing buffer",
+            extra={"rms": round(level, 5), "gate": self.speech_rms},
+        )
 
         started = time.monotonic()
 
@@ -278,7 +519,7 @@ class WhisperSttAdapter(SttAdapter):
                 # Whisper's own guards, tightened. A segment the model itself
                 # doubts is not worth translating.
                 no_speech_threshold=0.6,
-                log_prob_threshold=-1.0,
+                log_prob_threshold=LOG_PROB_FLOOR,
                 compression_ratio_threshold=2.4,
             )
 
@@ -295,6 +536,18 @@ class WhisperSttAdapter(SttAdapter):
                         },
                     )
                     continue
+                # Kept segments carry their signals too. Without this there is
+                # no way to tell, after the fact, whether something that reached
+                # the audience slipped past a gate or was never doubted at all,
+                # and that is the first question asked every time one does.
+                log.debug(
+                    "kept a segment",
+                    extra={
+                        "text": seg.text.strip(),
+                        "no_speech_prob": round(seg.no_speech_prob, 3),
+                        "avg_logprob": round(seg.avg_logprob, 3),
+                    },
+                )
                 kept.append(seg.text.strip())
             return " ".join(kept).strip()
 

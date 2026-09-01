@@ -33,6 +33,12 @@ from .room import TranslationRoom
 
 log = get_logger(__name__)
 
+# Wall time that may elapse without matching audio before the source is treated
+# as having stopped rather than as merely running late. Comfortably above the
+# backlog guard's default 3.0s threshold, so a queue the guard is already
+# shedding is never mistaken for a publisher that went away.
+SOURCE_GAP_S = 5.0
+
 
 @dataclass(slots=True)
 class SessionOutcome:
@@ -43,6 +49,13 @@ class SessionOutcome:
     latency: dict
     backlog: dict
     drift: dict
+    source_gaps: int = 0
+    """Times the source stream broke and the audio clock had to be re-anchored.
+
+    Non-zero means `latency` describes only the stretches the speaker was
+    actually publishing, so it belongs beside those figures rather than buried
+    in the log.
+    """
 
 
 class _LanguageWorker:
@@ -107,6 +120,12 @@ class _LanguageWorker:
         )
 
         first = True
+        # THIS chunk's latency, not the session's. Storing the running p50 here
+        # put a session-level aggregate on every row of a per-chunk table: the
+        # column could never show a spike, because a median does not spike, and
+        # ordering an e2e run by chunk_id gave a series that fell monotonically
+        # from 8.777 to 1.688 and looked like a pipeline warming up.
+        latency: float | None = None
         async for speech in session.tts.synthesise(text, voice, chunk.chunk_id):
             if first:
                 session.recorder.mark(
@@ -114,13 +133,12 @@ class _LanguageWorker:
                 )
             await session.room.push(self.language, speech.pcm, speech.sample_rate)
             if first:
-                session.recorder.mark(
+                latency = session.recorder.mark(
                     chunk.chunk_id, self.language, Stage.PUBLISHED, time.monotonic()
                 )
                 first = False
 
-        stats = session.recorder.stats(self.language)
-        await session.persist(chunk, self.language, text, latency=stats.p50 if stats.count else None)
+        await session.persist(chunk, self.language, text, latency=latency)
 
 
 class TranslationSession:
@@ -160,6 +178,7 @@ class TranslationSession:
         self._chunks = 0
         self._started_at = 0.0
         self._last_audio_at = 0.0
+        self._source_gaps = 0
         self._stop = asyncio.Event()
         self._failure: str | None = None
         self._end_reason: str | None = None
@@ -240,7 +259,8 @@ class TranslationSession:
 
     async def _anchor_clock(self, frames):
         """
-        Anchor the audio clock to the FIRST AUDIO FRAME, not to session start.
+        Anchor the audio clock to the FIRST AUDIO FRAME, not to session start,
+        and re-anchor it whenever the source stream breaks.
 
         The service starts before the venue publisher connects, often by many
         minutes. Anchoring at session start maps the speaker's t_audio=0 to a
@@ -250,7 +270,29 @@ class TranslationSession:
         Measured on a real phone: the session started at 13:25:22 and the
         speaker connected 199 seconds later, which reported latencies around
         90 seconds for audio that was in fact a few seconds behind.
+
+        The same fault recurs every time the speaker stops publishing, and the
+        first anchor cannot help with that. t_audio counts samples that arrived,
+        so a speaker who mutes, backgrounds the page or rejoins produces no
+        samples while wall time keeps moving. Measured on the same phone: a 16
+        minute absence made every later chunk report 965s glass-to-glass, with
+        translate at 0.032s and TTS at 0.046s. Nothing was slow; the mapping was
+        stale.
+
+        A gap is therefore wall time that elapsed without a matching amount of
+        audio. That is deliberately NOT the same test as "we are behind": when
+        the pipeline is behind, frames queue upstream and then arrive in a burst,
+        so audio outruns wall time rather than the reverse, and the backlog guard
+        this sits behind bounds that case anyway.
+
+        The threshold is generous because the two are indistinguishable from
+        here at small values. Under SOURCE_GAP_S a stall is reported as the
+        latency it really is; over it, the gap is assumed to be the publisher's
+        and forgiven. With the backlog guard disabled (`--max-lag 0`) a genuine
+        stall longer than the threshold would be forgiven too, which is the
+        price of not silently erasing real latency at every hesitation.
         """
+        previous: tuple[float, float] | None = None
         async for frame in frames:
             if not self.recorder.clock.anchored:
                 self.recorder.clock.anchor(t_audio=frame.t_audio, t_wall=frame.t_wall)
@@ -261,6 +303,27 @@ class TranslationSession:
                         "t_audio": frame.t_audio,
                     },
                 )
+            elif previous is not None:
+                prev_audio, prev_wall = previous
+                slip = (frame.t_wall - prev_wall) - (frame.t_audio - prev_audio)
+                if slip > SOURCE_GAP_S:
+                    corrected = self.recorder.clock.rebase(
+                        t_audio=frame.t_audio, t_wall=frame.t_wall
+                    )
+                    self._source_gaps += 1
+                    # ERROR, not WARNING: the speaker's audio stopped reaching
+                    # us, and on a live event that is a fault someone has to see
+                    # even though the pipeline recovers on its own.
+                    log.error(
+                        "source stream gap; audio clock re-anchored",
+                        extra={
+                            "gap_s": round(slip, 3),
+                            "corrected_s": round(corrected, 3),
+                            "t_audio": round(frame.t_audio, 3),
+                            "gaps_this_session": self._source_gaps,
+                        },
+                    )
+            previous = (frame.t_audio, frame.t_wall)
             yield frame
 
     async def _dispatch(self, chunk: PhraseChunk) -> None:
@@ -380,6 +443,11 @@ class TranslationSession:
                 "status": status,
                 "reason": reason,
                 "chunks": self._chunks,
+                # A session with source gaps had its clock re-anchored, so the
+                # latency figures below cover only the stretches the speaker was
+                # actually publishing. Reporting the count keeps that visible
+                # instead of leaving a clean-looking summary over a broken feed.
+                "source_gaps": self._source_gaps,
                 "latency": latency,
                 "backlog": backlog,
                 "drift": drift,
@@ -393,4 +461,5 @@ class TranslationSession:
             latency=latency,
             backlog=backlog,
             drift=drift,
+            source_gaps=self._source_gaps,
         )

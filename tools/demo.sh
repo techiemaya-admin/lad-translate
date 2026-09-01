@@ -61,6 +61,15 @@ MODEL="${MODEL:-tiny}"
 EMIT="${EMIT:-3.0}"
 WINDOW="${WINDOW:-6.0}"
 
+# Energy gate. Below this a buffer is never handed to the model, which is the
+# only defence that costs nothing and the only one an invented phrase cannot get
+# past. Measured on a phone in a room: background noise reached 0.037 and speech
+# started at 0.067, and the old 0.006 passed all of the former.
+#
+# fixtures/holmes.wav is quiet narration at 0.029-0.050 and falls below this, so
+# scoring against it needs SPEECH_RMS=0.006.
+SPEECH_RMS="${SPEECH_RMS:-0.05}"
+
 case "${1:-up}" in
 up)
   ./tools/pg.sh start >/dev/null 2>&1 || echo "postgres already running"
@@ -126,10 +135,11 @@ PYEOF
   pkill -f session_live.py 2>/dev/null || true
   nohup "$PY" tools/session_live.py --audio "$AUDIO" --targets "$TARGETS" \
     --model "$MODEL" --emit-interval "$EMIT" --window "$WINDOW" \
+    --speech-rms "$SPEECH_RMS" \
     --room demo-room --loop > "$SCRATCH/session.log" 2>&1 &
 
   echo
-  echo "  stt       : $MODEL (emit ${EMIT}s, window ${WINDOW}s)"
+  echo "  stt       : $MODEL (emit ${EMIT}s, window ${WINDOW}s, gate ${SPEECH_RMS})"
   echo "  languages : $TARGETS"
   echo "  source    : $AUDIO (looping)"
   echo "  logs      : $SCRATCH"
