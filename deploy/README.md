@@ -43,7 +43,17 @@ components dial), because on the dev Mac they must differ.
 
 ## One-time setup in `lad-develop`
 
-Region `asia-south1`, matching VOAG.
+Region **`me-central2`** (Dammam), which deviates from VOAG's `asia-south1` on
+purpose: this is a latency product and the venues are in Dubai. Dammam is about
+430km away against Mumbai's ~1,900km, and media crosses the SFU twice — speaker
+in, listener out — so the saving is paid twice per phrase.
+
+`me-central1` (Doha) is nearer still and cannot be used. It has **no GPUs in any
+zone** — `gcloud compute accelerator-types list --filter="zone~'me-central1'"`
+returns nothing at all, and there are no `g2` machine types there either. Cloud
+Run and Artifact Registry both exist in me-central1, so it is possible to put
+the API there and the VM in me-central2; don't. It buys nothing and adds a
+cross-region hop to `RoomInspector`, which the join page calls on every load.
 
 ### 1. Secrets
 
@@ -70,7 +80,7 @@ read it and fails only where it is compared.
 
 ```bash
 gcloud artifacts repositories create lad-translate-dev \
-  --repository-format=docker --location=asia-south1 \
+  --repository-format=docker --location=me-central2 \
   --description="LAD Live Translation, develop"
 ```
 
@@ -98,7 +108,7 @@ backends were written against.
 ```bash
 gcloud compute instances create lad-translate-sfu-dev \
   --project=lad-develop \
-  --zone=asia-south1-a \
+  --zone=me-central2-a \
   --machine-type=g2-standard-8 \
   --maintenance-policy=TERMINATE \
   --image-family=common-cu124-debian-11 \
@@ -109,9 +119,22 @@ gcloud compute instances create lad-translate-sfu-dev \
   --tags=lad-translate-sfu
 ```
 
-Check `g2` availability in the zone before running this
-(`gcloud compute machine-types list --filter="name=g2-standard-8"`); L4 stock
-moves, and `asia-south1-a` is a starting guess rather than a verified fact.
+Verified in `lad-develop` on 7 Sep 2026, rather than assumed:
+
+- L4 is in `me-central2-a` and `me-central2-c`. **Not `-b`** — putting the
+  instance there fails with no capacity, which reads like a stock problem and
+  is not one.
+- `g2-standard-8` exists in both.
+- `NVIDIA_L4_GPUS` quota is `limit=1, usage=0`, so one VM needs no quota
+  request. A second one does.
+
+Re-check before building, since stock moves:
+
+```bash
+gcloud compute accelerator-types list --filter="zone~'me-central2'"
+gcloud compute regions describe me-central2 --format=json \
+  | python3 -c "import json,sys; print([q for q in json.load(sys.stdin)['quotas'] if q['metric']=='NVIDIA_L4_GPUS'])"
+```
 
 Give the VM's service account `roles/secretmanager.secretAccessor` —
 `bootstrap.sh` reads all three secrets at provision time.
@@ -143,13 +166,13 @@ that fails against a name that does not resolve yet.
 Reserve the IP as static, or the name breaks the next time the VM restarts:
 
 ```bash
-gcloud compute addresses create lad-translate-sfu-dev --region=asia-south1
+gcloud compute addresses create lad-translate-sfu-dev --region=me-central2
 ```
 
 ### Provision
 
 ```bash
-gcloud compute ssh lad-translate-sfu-dev --zone=asia-south1-a
+gcloud compute ssh lad-translate-sfu-dev --zone=me-central2-a
 sudo git clone https://github.com/techiemaya-admin/lad-translate.git /opt/lad-translate
 sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com GCP_PROJECT=lad-develop \
      bash /opt/lad-translate/deploy/vm/bootstrap.sh
@@ -207,6 +230,15 @@ Real, and not fixed by the scaffolding here.
   `LAD_CONTROL_SCHEMA`. That is exactly the pattern the repo's own Constraints
   section forbids, and it means this VM serves one tenant. Fine for develop,
   blocking for anything else.
+- **The core Postgres is on DigitalOcean, and the worker now sits further from
+  it.** `165.22.221.77` is a DigitalOcean address (`DIGITALOCEAN-165-22-0-0`),
+  not a GCP one, and `session/pipeline.py:323` awaits `record_transcript` inside
+  the per-language worker loop — so DB round-trip time comes out of the worker's
+  real-time headroom on every phrase, per language. Moving from `asia-south1` to
+  `me-central2` buys media latency and may cost DB latency. Measure it on the
+  box before an event (`psql ... -c '\timing on' -c 'select 1'`); if it hurts,
+  the fix is to make `persist` fire-and-forget rather than to move the region
+  back, because the listener is what the budget is about.
 - **One VM is one venue.** Sessions are pinned to the box running the SFU.
   Scaling past a single hall needs a room-to-node routing decision that does not
   exist yet.
