@@ -124,12 +124,44 @@ gcloud artifacts repositories create lad-translate-dev \
 | Field | Value |
 |---|---|
 | Repository | `techiemaya-admin/lad-translate` |
-| Branch | `^main$` |
+| Branch | `^develop$` |
 | Config | `cloudbuild-develop.yaml` |
+
+Connecting the repository is a console step and must happen first — the GitHub
+App is authorised per repository, and until it is, trigger creation fails with
+`FAILED_PRECONDITION: Repository mapping does not exist`:
+
+<https://console.cloud.google.com/cloud-build/triggers;region=global/connect?project=160078175457>
+
+```bash
+gcloud builds triggers create github \
+  --name=lad-translate-develop --region=global \
+  --repo-owner=techiemaya-admin --repo-name=lad-translate \
+  --branch-pattern='^develop$' \
+  --build-config=cloudbuild-develop.yaml \
+  --service-account=projects/lad-develop/serviceAccounts/160078175457-compute@developer.gserviceaccount.com \
+  --description='LAD Live Translation - develop'
+```
 
 The build service account needs `roles/run.admin`,
 `roles/iam.serviceAccountUser`, `roles/artifactregistry.writer` and
-`roles/secretmanager.secretAccessor`.
+`roles/secretmanager.secretAccessor`. Already satisfied in `lad-develop`:
+`160078175457-compute@` holds `roles/editor` and
+`roles/secretmanager.secretAccessor`, and editor covers the first three.
+
+## Branches
+
+Three long-lived branches, matching every other LAD repo:
+
+| Branch | Environment | Trigger |
+|---|---|---|
+| `develop` | develop | `lad-translate-develop` → Cloud Run `lad-translate-dev` |
+| `stage` | stage | none yet — needs `cloudbuild-stage.yaml` and its own secrets |
+| `main` | production | none yet |
+
+Work lands on `develop` and is promoted forward. Note the trap carried over from
+the rest of the platform: **merging to `stage` is not deploying.** Verify the
+running revision actually carries your commit before believing it shipped.
 
 ## The GPU VM
 

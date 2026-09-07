@@ -12,7 +12,7 @@
 # Cloud Build trigger (1st-gen GitHub App, same shape as voag-develop):
 #   Project       : lad-develop (160078175457)
 #   Repo          : techiemaya-admin/lad-translate
-#   Branch filter : ^main$
+#   Branch filter : ^develop$
 #   Config file   : cloudbuild-develop.yaml
 #
 # Secret Manager entries required in lad-develop BEFORE the first build:
