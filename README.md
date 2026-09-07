@@ -1003,14 +1003,6 @@ rules are switched off deliberately and say why in the config — `RUF001`
 flags the Telugu and Arabic strings as "ambiguous unicode", which is the rule
 being wrong about this project rather than the project being wrong.
 
-### Actions is currently blocked
-
-Runs fail before starting with "recent account payments have failed or your
-spending limit needs to be increased". Actions minutes are billable on private
-repositories. Until that is resolved the workflows will not run, which is why
-`.githooks/pre-push` exists: it catches secrets locally with no dependency on
-GitHub billing.
-
 ## End to end verification
 
 `tools/e2e.py` drives one real session through every layer and checks each,

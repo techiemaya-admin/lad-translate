@@ -1,0 +1,51 @@
+[Unit]
+Description=LAD Live Translation session (room %i)
+# The worker connects to the SFU on localhost. Starting it first only orders
+# the units; the worker still retries, because systemd starting a process is
+# not the same as LiveKit being ready to accept a join.
+After=network-online.target livekit-server.service
+Wants=network-online.target
+Requires=livekit-server.service
+
+[Service]
+Type=simple
+User=ladtranslate
+Group=ladtranslate
+WorkingDirectory=/opt/lad-translate
+
+# Non-secret config. Secrets (LAD_DATABASE_URL, LIVEKIT_API_KEY/SECRET) are in
+# the second file, written by bootstrap.sh from Secret Manager, mode 0400.
+EnvironmentFile=/etc/lad-translate/session.env
+EnvironmentFile=/etc/lad-translate/secrets.env
+
+# A templated unit so one talk is one unit instance:
+#   systemctl start lad-translate-session@keynote-hall-a
+# The room name IS the instance name, which keeps two concurrent talks from
+# sharing a session row or a set of language tracks.
+#
+# --device cuda is the point of this machine. Without it faster-whisper loads
+# int8 on CPU and the L4 is decoration.
+ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
+    --room %i \
+    --targets ${LAD_TRANSLATE_TARGETS} \
+    --event ${LAD_TRANSLATE_EVENT} \
+    --model ${LAD_TRANSLATE_STT_MODEL} \
+    --device cuda \
+    --emit-interval ${LAD_TRANSLATE_EMIT_INTERVAL} \
+    --window ${LAD_TRANSLATE_WINDOW} \
+    --wait ${LAD_TRANSLATE_WAIT}
+
+# Deliberately NOT Restart=always. The tool exits when the talk ends or the
+# idle cap is reached, and that is success. Restarting would open a fresh
+# session row against an empty room every time a speaker stops.
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+# Build context hygiene. Without this the context is ~40MB of WAV fixtures and,
+# on a developer machine, whatever .venv/ and models/ have grown to.
+
+.git/
+.github/
+.githooks/
+
+.venv/
+.local/
+models/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Audio. Reproducible from a tool plus a fixture, larger than the source tree.
+fixtures/
+
+# Not shipped: the API image runs one entrypoint, and the test suite is a CI
+# concern rather than a runtime one.
+tests/
+
+# Never. See .gitleaks.toml.
+.env
+secrets/
+*.pem
+*.key
+
+.DS_Store
+README.md

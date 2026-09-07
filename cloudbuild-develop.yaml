@@ -1,0 +1,115 @@
+# LAD Live Translation - develop deploy via GCP Cloud Build.
+#
+# Builds and deploys ONE service: the listener join API.
+#
+# The SFU and the session worker are deliberately NOT here. LiveKit needs UDP
+# ingress, which Cloud Run does not have; the worker holds a WebRTC connection
+# and ~2GB of model weights for the length of a talk, against a 2 second
+# latency budget that a cold start blows on its own. Both run on the GPU VM -
+# see deploy/vm/README.md. Splitting them is why api/tokens.py carries
+# LIVEKIT_URL and LIVEKIT_INTERNAL_URL as separate settings.
+#
+# Cloud Build trigger (1st-gen GitHub App, same shape as voag-develop):
+#   Project       : lad-develop (160078175457)
+#   Repo          : techiemaya-admin/lad-translate
+#   Branch filter : ^develop$
+#   Config file   : cloudbuild-develop.yaml
+#
+# Secret Manager entries required in lad-develop BEFORE the first build:
+#   lad-translate-database-url        postgresql://user:pass@host:5432/salesmaya_agent
+#   lad-translate-livekit-api-key     must match the VM's livekit.yaml
+#   lad-translate-livekit-api-secret  must match the VM's livekit.yaml
+#
+# The LiveKit key/secret are one pair shared by the API (mints tokens) and the
+# VM (validates them). Rotating one without the other means every listener
+# token is rejected, so rotate through Secret Manager and restart both.
+#
+# NOTE: lint, unit tests and gitleaks stay on GitHub Actions as PR gates
+# (.github/workflows/). This mirrors VOAG rather than WABA, which embeds them.
+
+steps:
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args: ['-c', 'echo "${BRANCH_NAME,,}" > /workspace/branch_lower.txt']
+
+  # Build + push the API image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.api'
+      - '-t'
+      - '${_API_IMAGE}:$COMMIT_SHA'
+      - '-t'
+      - '${_API_IMAGE}:latest'
+      - '--cache-from'
+      - '${_API_IMAGE}:latest'
+      - '--build-arg'
+      - 'BUILDKIT_INLINE_CACHE=1'
+      - '.'
+    env: ['DOCKER_BUILDKIT=1']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_API_IMAGE}:$COMMIT_SHA']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_API_IMAGE}:latest']
+
+  # Deploy -> Cloud Run lad-translate-dev
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        BRANCH_LOWER=$(cat /workspace/branch_lower.txt)
+        # --allow-unauthenticated is the product: a listener scans a QR code
+        # and has no account and no credentials. The authorisation that matters
+        # is in the token this service mints - subscribe-only, hidden, single
+        # room (api/tokens.py) - not at the ingress.
+        #
+        # --min-instances 1 because the audience arrives in one burst when the
+        # QR code goes up on screen. A cold start there is a hall of people
+        # looking at a spinner.
+        gcloud run deploy ${_API_SERVICE} \
+          --image ${_API_IMAGE}:$COMMIT_SHA \
+          --region ${_REGION} --platform managed --allow-unauthenticated \
+          --port 8080 --memory 512Mi --cpu 1 \
+          --concurrency 80 --min-instances 1 --max-instances 10 \
+          --timeout 60 --cpu-boost \
+          --env-vars-file env-cloudrun-develop.yaml \
+          --set-secrets ${_SM_ENV_VARS} \
+          --update-labels environment=develop,branch=$${BRANCH_LOWER},commit-sha=$SHORT_SHA,managed-by=cloud-build
+
+  # Prove the deployed revision answers, rather than trusting a green deploy.
+  # A Cloud Run deploy reports SUCCESS for a container that starts and then
+  # fails every request.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        URL=$(gcloud run services describe ${_API_SERVICE} \
+          --region ${_REGION} --platform managed --format='value(status.url)')
+        echo "Smoke testing $${URL}/healthz"
+        curl -fsS --retry 5 --retry-delay 3 --retry-connrefused "$${URL}/healthz"
+        echo
+        echo "Deployed: $${URL}"
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: 'ALLOW_LOOSE'
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
+
+images:
+  - '${_API_IMAGE}:$COMMIT_SHA'
+  - '${_API_IMAGE}:latest'
+
+timeout: '1200s'
+
+substitutions:
+  _REGION: 'asia-south1'
+  _API_SERVICE: 'lad-translate-dev'
+  _API_IMAGE: 'asia-south1-docker.pkg.dev/lad-develop/lad-translate-dev/lad-translate-dev-api'
+  # Runtime secrets (Secret Manager). ENV_VAR=secret-name:latest, comma-separated.
+  _SM_ENV_VARS: 'LAD_DATABASE_URL=lad-translate-database-url:latest,LIVEKIT_API_KEY=lad-translate-livekit-api-key:latest,LIVEKIT_API_SECRET=lad-translate-livekit-api-secret:latest'

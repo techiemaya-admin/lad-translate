@@ -1,0 +1,43 @@
+# LiveKit SFU - develop, single node on the GPU VM.
+#
+# Keys are NOT here. bootstrap.sh writes /etc/livekit/keys.yaml from Secret
+# Manager and this file includes it by path, so the pair never enters git.
+# The pair MUST match lad-translate-livekit-api-key / -api-secret in
+# lad-develop, because Cloud Run mints the tokens this node validates.
+
+port: 7880
+
+rtc:
+  # WebRTC media. This range is why the SFU cannot be a Cloud Run service:
+  # Cloud Run has no UDP ingress at all, and forcing every listener onto the
+  # TCP fallback would spend the latency budget on transport.
+  port_range_start: 50000
+  port_range_end: 60000
+
+  # TCP fallback for listeners behind a firewall that blocks UDP. Conference
+  # and hotel wifi does this routinely, and a listener who cannot reach the
+  # media port hears nothing while everything upstream looks healthy.
+  tcp_port: 7881
+
+  # The VM sits behind a Google Cloud external IP, so the node must advertise
+  # the address a phone can actually reach rather than its internal 10.x one.
+  use_external_ip: true
+
+redis: {}
+
+# Rooms are created by the session worker when it joins, and torn down when
+# the last participant leaves.
+room:
+  auto_create: true
+  # Generous: someone has to scan a code and start talking. The 60s default is
+  # what killed the first live attempt - see README, "A speaker wait is not an
+  # idle cap".
+  empty_timeout: 1800
+
+logging:
+  level: info
+  # JSON, so Cloud Logging parses it into queryable fields rather than one
+  # opaque text blob per line. Same reasoning as obs/log.py.
+  json: true
+
+key_file: /etc/livekit/keys.yaml
