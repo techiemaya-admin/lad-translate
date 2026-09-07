@@ -23,14 +23,15 @@ EnvironmentFile=/etc/lad-translate/secrets.env
 # The room name IS the instance name, which keeps two concurrent talks from
 # sharing a session row or a set of language tracks.
 #
-# --device cuda is the point of this machine. Without it faster-whisper loads
-# int8 on CPU and the L4 is decoration.
+# --device comes from session.env and is cpu here: this VM has no GPU, and the
+# measurement says it does not need one. The flag exists so a GPU box can be
+# dropped in later without touching this unit.
 ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
     --room %i \
     --targets ${LAD_TRANSLATE_TARGETS} \
     --event ${LAD_TRANSLATE_EVENT} \
     --model ${LAD_TRANSLATE_STT_MODEL} \
-    --device cuda \
+    --device ${LAD_TRANSLATE_STT_DEVICE} \
     --emit-interval ${LAD_TRANSLATE_EMIT_INTERVAL} \
     --window ${LAD_TRANSLATE_WINDOW} \
     --wait ${LAD_TRANSLATE_WAIT}
