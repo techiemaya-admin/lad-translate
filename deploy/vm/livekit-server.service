@@ -1,0 +1,25 @@
+[Unit]
+Description=LiveKit SFU (LAD Live Translation, develop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=livekit
+Group=livekit
+ExecStart=/usr/local/bin/livekit-server --config /etc/livekit/livekit.yaml
+Restart=always
+RestartSec=5
+
+# The default is 1024. Each listener is a peer connection, and the target is
+# 500 phones in one room.
+LimitNOFILE=65535
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/livekit
+
+[Install]
+WantedBy=multi-user.target

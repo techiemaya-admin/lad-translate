@@ -49,6 +49,10 @@ async def main() -> int:
     ap.add_argument("--targets", default="fr,ar")
     ap.add_argument("--event", default="Live speaker test")
     ap.add_argument("--model", default="tiny")
+    # Defaults to cpu so nothing about running this on the dev Mac changes.
+    # The GPU box passes --device cuda, which is the whole reason it exists:
+    # without it faster-whisper loads int8 on CPU and the L4 sits idle.
+    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--emit-interval", type=float, default=3.0)
     ap.add_argument("--window", type=float, default=6.0)
     ap.add_argument("--wait", type=float, default=900.0,
@@ -109,7 +113,8 @@ async def main() -> int:
     print("\n  waiting for a speaker...\n", flush=True)
 
     async with WhisperSttAdapter(
-        model_size=args.model, emit_interval=args.emit_interval, max_window_s=args.window
+        model_size=args.model, device=args.device,
+        emit_interval=args.emit_interval, max_window_s=args.window
     ) as stt, tts:
         session = TranslationSession(
             config=config, room=room, stt=stt, mt=mt, tts=tts, store=store, max_lag_s=3.0

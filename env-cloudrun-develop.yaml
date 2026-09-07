@@ -1,0 +1,24 @@
+# Non-secret runtime config for the join API on Cloud Run (develop).
+# Secrets are NOT here - they come from Secret Manager via --set-secrets in
+# cloudbuild-develop.yaml. See .gitleaks.toml.
+
+LOG_LEVEL: INFO
+
+# Control plane schema: holds the tenants table the join service scans to find
+# which tenant owns a session. There is deliberately no default in the code
+# (db/pool.py:35) - an unresolved schema must fail rather than quietly share.
+LAD_CONTROL_SCHEMA: lad_dev
+
+# What BROWSERS dial. Must be wss://, because the join page is served over
+# https and a secure page cannot open an insecure WebSocket.
+# Points at the GPU VM running the SFU - see deploy/vm/README.md.
+LIVEKIT_URL: wss://translate-sfu-dev.mrlads.com
+
+# What THIS SERVICE dials, for RoomInspector's participant listing.
+#
+# On the dev Mac these two differ, because the SDK will not trust Caddy's
+# INTERNAL CA and localhost should not be routed out through a proxy. Neither
+# applies here: Cloud Run has no local SFU, and the VM's certificate is a real
+# public one the SDK trusts. Set explicitly rather than left to fall back, so
+# that changing the public URL cannot silently redirect server-side calls.
+LIVEKIT_INTERNAL_URL: wss://translate-sfu-dev.mrlads.com

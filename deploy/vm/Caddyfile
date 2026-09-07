@@ -1,0 +1,15 @@
+# TLS termination for the SFU's signalling connection.
+#
+# Browsers dial wss://, and a page served over https cannot open an insecure
+# WebSocket. Caddy gets a real Let's Encrypt certificate for this name, which
+# also means the Cloud Run join service can use ONE url for both
+# LIVEKIT_URL and LIVEKIT_INTERNAL_URL - the SDK trusts a public CA. That is
+# only untrue locally, where Caddy signs with its own internal CA and the
+# Python SDK rejects it (README, "Two URLs, and they must differ").
+#
+# Media does NOT pass through here. WebRTC goes straight to UDP 50000-60000 /
+# TCP 7881 on the VM's external IP; proxying it would be pointless and slow.
+
+{$LAD_TRANSLATE_SFU_HOST} {
+	reverse_proxy localhost:7880
+}

@@ -1,0 +1,76 @@
+# =============================================================================
+# LAD Live Translation - JOIN API
+# =============================================================================
+# The listener-facing service: serves the join page, inspects the live room,
+# and mints subscribe-only LiveKit tokens. No models, no GPU, no media.
+#
+# This is the ONLY component of this repo that belongs on Cloud Run. The SFU
+# needs UDP ingress and the session worker holds a WebRTC connection for the
+# length of a talk; both live on the GPU VM (see deploy/vm/).
+#
+#   docker build -f Dockerfile.api -t lad-translate-api:latest .
+#   docker run -p 8080:8080 --env-file .env lad-translate-api:latest
+# =============================================================================
+
+FROM python:3.11-slim-bookworm AS base
+
+# Pinned, same as the version CI resolves with (.github/workflows/tests.yml).
+COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src
+
+# -----------------------------------------------------------------------------
+# Dependencies. Cached unless pyproject.toml changes.
+# -----------------------------------------------------------------------------
+FROM base AS dependencies
+
+# Deliberately NOT the `livekit` extra. That extra is `livekit-agents` plus the
+# full `livekit` rtc SDK, which this service never touches: `api/` imports
+# `livekit.api` only, and `session/room.py` (the one module that needs `rtc`)
+# runs on the VM. Pulling the media SDK in here would add hundreds of MB to an
+# image whose entire job is to answer a token request quickly.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv venv /app/.venv && \
+    VIRTUAL_ENV=/app/.venv uv pip install \
+        'fastapi>=0.115' 'uvicorn[standard]>=0.32' 'pyjwt>=2.9' \
+        'asyncpg>=0.30' 'livekit-api>=1.0' \
+        'pydantic>=2.9' 'numpy>=1.26,<2.3' 'python-dotenv>=1.0'
+
+# -----------------------------------------------------------------------------
+# Application
+# -----------------------------------------------------------------------------
+FROM dependencies AS application
+
+# src/ and tools/ only. The image needs the package, the join page assets it
+# serves, and the entrypoint - not the 40MB of fixtures or the test suite.
+COPY src/ /app/src/
+COPY tools/serve_join.py /app/tools/serve_join.py
+COPY pyproject.toml /app/pyproject.toml
+
+ENV PATH="/app/.venv/bin:${PATH}"
+
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f "http://localhost:${PORT:-8080}/healthz" || exit 1
+
+EXPOSE 8080
+
+# 0.0.0.0 because Cloud Run routes to the container's external interface, and
+# $PORT because Cloud Run chooses it. serve_join.py defaults to 127.0.0.1:8080,
+# which is right for a laptop and unreachable here.
+CMD ["sh", "-c", "exec python tools/serve_join.py --host 0.0.0.0 --port ${PORT:-8080}"]
