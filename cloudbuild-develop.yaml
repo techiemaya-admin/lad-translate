@@ -108,8 +108,8 @@ images:
 timeout: '1200s'
 
 substitutions:
-  _REGION: 'me-central2'
+  _REGION: 'asia-south1'
   _API_SERVICE: 'lad-translate-dev'
-  _API_IMAGE: 'me-central2-docker.pkg.dev/lad-develop/lad-translate-dev/lad-translate-dev-api'
+  _API_IMAGE: 'asia-south1-docker.pkg.dev/lad-develop/lad-translate-dev/lad-translate-dev-api'
   # Runtime secrets (Secret Manager). ENV_VAR=secret-name:latest, comma-separated.
   _SM_ENV_VARS: 'LAD_DATABASE_URL=lad-translate-database-url:latest,LIVEKIT_API_KEY=lad-translate-livekit-api-key:latest,LIVEKIT_API_SECRET=lad-translate-livekit-api-secret:latest'

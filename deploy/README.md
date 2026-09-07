@@ -43,17 +43,48 @@ components dial), because on the dev Mac they must differ.
 
 ## One-time setup in `lad-develop`
 
-Region **`me-central2`** (Dammam), which deviates from VOAG's `asia-south1` on
-purpose: this is a latency product and the venues are in Dubai. Dammam is about
-430km away against Mumbai's ~1,900km, and media crosses the SFU twice — speaker
-in, listener out — so the saving is paid twice per phrase.
+Region `asia-south1` (Mumbai), matching VOAG — but not for that reason, and not
+by preference. The Gulf regions were tried first and both failed.
 
-`me-central1` (Doha) is nearer still and cannot be used. It has **no GPUs in any
-zone** — `gcloud compute accelerator-types list --filter="zone~'me-central1'"`
-returns nothing at all, and there are no `g2` machine types there either. Cloud
-Run and Artifact Registry both exist in me-central1, so it is possible to put
-the API there and the VM in me-central2; don't. It buys nothing and adds a
-cross-region hop to `RoomInspector`, which the join page calls on every load.
+| Region | Cloud Run | Compute | GPU | Verdict |
+|---|---|---|---|---|
+| `me-central1` (Doha) | yes | yes | **none, any zone** | Cannot host the VM |
+| `me-central2` (Dammam) | **blocked** | **blocked** | L4 in catalog | Region not enabled for this project |
+| `asia-south1` (Mumbai) | yes | yes | L4, all 3 zones | Verified working |
+
+Doha is closest to Dubai and has no GPUs at all: `accelerator-types list` for
+`me-central1` returns nothing, and there are no `g2` machine types there.
+
+Dammam has L4 in the catalog, which is why it looked right, and the project has
+no access to the region:
+
+    PERMISSION_DENIED: Permission denied on 'locations/me-central2'
+    Access to the region is unavailable. Please contact our sales team
+
+That is an allowlisted-region entitlement, not an IAM role and not
+`constraints/gcp.resourceLocations` (which is `allValues: ALLOW` here). It
+applies to Artifact Registry, Cloud Run **and** Compute, so no split across
+me-central1 and me-central2 rescues it either.
+
+**The catalog is not the entitlement.** `accelerator-types list` and
+`machine-types list` read a global catalog and will happily list hardware in a
+region the project cannot touch. Probe the region itself before choosing it:
+
+```bash
+gcloud compute addresses create probe --region=<REGION> && \
+  gcloud compute addresses delete probe --region=<REGION> --quiet
+```
+
+Verified for `asia-south1` on 7 Sep 2026: L4 in all three zones,
+`g2-standard-8` present, `NVIDIA_L4_GPUS` quota `limit=1 usage=0` (one VM needs
+no quota request, a second does), Compute create probe passed, and the
+`lad-translate-dev` Artifact Registry repo exists.
+
+**Mumbai is ~1,900km from Dubai against Dammam's ~430km, and this is a latency
+product** — media crosses the SFU twice, so the difference is paid twice per
+phrase. If Dubai becomes the primary venue, request `me-central2` access from
+Google and move: it is `_REGION` and the registry host in
+`cloudbuild-develop.yaml`, plus the zone flags here. Nothing else changes.
 
 ### 1. Secrets
 
@@ -78,9 +109,11 @@ read it and fails only where it is compared.
 
 ### 2. Artifact Registry
 
+Already created in `lad-develop` on 7 Sep 2026. To recreate:
+
 ```bash
 gcloud artifacts repositories create lad-translate-dev \
-  --repository-format=docker --location=me-central2 \
+  --repository-format=docker --location=asia-south1 \
   --description="LAD Live Translation, develop"
 ```
 
@@ -108,7 +141,7 @@ backends were written against.
 ```bash
 gcloud compute instances create lad-translate-sfu-dev \
   --project=lad-develop \
-  --zone=me-central2-a \
+  --zone=asia-south1-a \
   --machine-type=g2-standard-8 \
   --maintenance-policy=TERMINATE \
   --image-family=common-cu124-debian-11 \
@@ -166,13 +199,13 @@ that fails against a name that does not resolve yet.
 Reserve the IP as static, or the name breaks the next time the VM restarts:
 
 ```bash
-gcloud compute addresses create lad-translate-sfu-dev --region=me-central2
+gcloud compute addresses create lad-translate-sfu-dev --region=asia-south1
 ```
 
 ### Provision
 
 ```bash
-gcloud compute ssh lad-translate-sfu-dev --zone=me-central2-a
+gcloud compute ssh lad-translate-sfu-dev --zone=asia-south1-a
 sudo git clone https://github.com/techiemaya-admin/lad-translate.git /opt/lad-translate
 sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com GCP_PROJECT=lad-develop \
      bash /opt/lad-translate/deploy/vm/bootstrap.sh
