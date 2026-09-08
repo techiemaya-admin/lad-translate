@@ -196,6 +196,20 @@ async def test_healthz(env):
     assert (await client.get("/healthz")).json() == {"ok": True}
 
 
+async def test_health_is_served_for_cloud_run(env):
+    """
+    /health matters more than /healthz in production.
+
+    Google's frontend reserves the exact path /healthz on *.run.app and answers
+    it with its own 404, so the Cloud Run smoke test probes /health instead.
+    If this route is ever dropped, the deploy gate goes green against a service
+    nothing has actually checked.
+    """
+    client, *_ = env
+    assert (await client.get("/health")).status_code == 200
+    assert (await client.get("/health")).json() == {"ok": True}
+
+
 # --- original audio ---------------------------------------------------------
 
 

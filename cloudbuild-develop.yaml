@@ -79,6 +79,37 @@ steps:
           --set-secrets ${_SM_ENV_VARS} \
           --update-labels environment=develop,branch=$${BRANCH_LOWER},commit-sha=$SHORT_SHA,managed-by=cloud-build
 
+  # Make the service public, and do it as its own retried step.
+  #
+  # `gcloud run deploy --allow-unauthenticated` sets this binding immediately
+  # after creating the service, and on a first deploy into a region that races:
+  # it reported "Setting IAM policy failed" and left the service private while
+  # still declaring success. An unauthorised request to a private Cloud Run
+  # service returns a Google HTML 404, not a 403, so the symptom is a health
+  # check that looks like a missing route on a service that is running fine.
+  #
+  # Idempotent, so re-running a build costs nothing.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        for attempt in 1 2 3 4 5; do
+          if gcloud run services add-iam-policy-binding ${_API_SERVICE} \
+               --region ${_REGION} --member=allUsers --role=roles/run.invoker \
+               >/dev/null 2>&1; then
+            echo "allUsers -> roles/run.invoker bound (attempt $$attempt)"
+            exit 0
+          fi
+          echo "IAM binding attempt $$attempt failed, retrying..."
+          sleep 5
+        done
+        echo "ERROR: could not make ${_API_SERVICE} public after 5 attempts." >&2
+        echo "A listener scans a QR code and has no credentials; a private" >&2
+        echo "service means an empty hall. Failing rather than shipping that." >&2
+        exit 1
+
   # Prove the deployed revision answers, rather than trusting a green deploy.
   # A Cloud Run deploy reports SUCCESS for a container that starts and then
   # fails every request.
@@ -90,8 +121,10 @@ steps:
         set -e
         URL=$(gcloud run services describe ${_API_SERVICE} \
           --region ${_REGION} --platform managed --format='value(status.url)')
-        echo "Smoke testing $${URL}/healthz"
-        curl -fsS --retry 5 --retry-delay 3 --retry-connrefused "$${URL}/healthz"
+        echo "Smoke testing $${URL}/health"
+        # /health, not /healthz: Google's frontend reserves the latter on
+        # *.run.app and answers it with a 404 the container never sees.
+        curl -fsS --retry 5 --retry-delay 3 --retry-connrefused "$${URL}/health"
         echo
         echo "Deployed: $${URL}"
 
