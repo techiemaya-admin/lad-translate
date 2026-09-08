@@ -35,7 +35,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from lad_translate.adapters.mt_routing import RoutingMtAdapter
-from lad_translate.adapters.stt_whisper import WhisperSttAdapter
 from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter
 from lad_translate.api.rooms import SOURCE_TRACK_NAME
 from lad_translate.api.tokens import TokenIssuer
@@ -67,6 +66,34 @@ class Check:
 
 
 CHECKS: list[Check] = []
+
+
+def build_stt_backend(args):
+    """
+    Construct the STT backend named by --stt.
+
+    The two backends take different options because they are different shapes:
+    Whisper needs a window and an emit interval because it re-transcribes a
+    sliding buffer, and a streaming transducer has neither - it encodes each
+    step once and carries its context in a cache tensor. Passing Whisper's
+    knobs to it would be meaningless rather than merely unused.
+    """
+    from lad_translate.adapters.registry import build_stt
+
+    if args.stt == "fastconformer":
+        return build_stt(
+            "fastconformer",
+            lookahead=args.lookahead,
+            device=args.device if args.device != "cpu" else None,
+        )
+    return build_stt(
+        "faster-whisper",
+        model_size=args.model,
+        device=args.device,
+        cpu_threads=getattr(args, "cpu_threads", 0),
+        emit_interval=args.emit_interval,
+        max_window_s=args.window,
+    )
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -185,6 +212,13 @@ async def main() -> int:
     ap.add_argument("--reference", type=Path, default=ROOT / "fixtures" / "holmes.txt")
     ap.add_argument("--model", default="tiny")
     ap.add_argument("--tenant", default="techiemaya")
+    ap.add_argument("--stt", default=os.getenv("STT_BACKEND", "faster-whisper"),
+                    choices=["faster-whisper", "fastconformer"])
+    ap.add_argument("--lookahead", default="480ms",
+                    help="fastconformer only: 0ms 80ms 480ms 1040ms")
+    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    ap.add_argument("--emit-interval", type=float, default=3.0)
+    ap.add_argument("--window", type=float, default=6.0)
     ap.add_argument(
         "--targets", default="fr,te",
         help="fr,te exercises both translation backends but starves two cores; "
@@ -247,7 +281,7 @@ async def main() -> int:
     done = asyncio.Event()
     started = time.monotonic()
 
-    async with WhisperSttAdapter(model_size=args.model, emit_interval=3.0, max_window_s=6.0) as stt, tts:
+    async with build_stt_backend(args) as stt, tts:
         pub = asyncio.create_task(
             publisher(url, issuer.for_publisher(room_name), args.audio, done)
         )

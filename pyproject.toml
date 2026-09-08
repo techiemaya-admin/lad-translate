@@ -19,8 +19,14 @@ stt-cpu = ["faster-whisper>=1.1.0"]
 mt-cpu  = ["ctranslate2>=4.4", "sentencepiece>=0.2", "huggingface-hub>=0.26"]
 tts-cpu = ["piper-tts>=1.2"]
 
-# --- GPU backends: for the 24GB box, not installable here -------------------
-# stt-gpu = ["nemo-toolkit[asr]>=2.0"]
+# --- Streaming STT ----------------------------------------------------------
+# Measured at RTF 0.07 on 16 CPU cores, so the "gpu" label these carried was
+# wrong: a CPU torch build is enough. See adapters/stt_fastconformer.py.
+#
+# Needs Python >= 3.11.4. NeMo's safe_extract passes filter= to
+# TarFile.extract, so on Debian 12's 3.11.2 no .nemo file loads at all.
+stt-streaming = ["nemo_toolkit[asr]>=2.0"]
+
 # tts-gpu = ["kokoro>=0.9"]
 
 # --- Transport and storage --------------------------------------------------

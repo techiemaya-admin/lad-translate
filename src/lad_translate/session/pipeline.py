@@ -17,6 +17,7 @@ chains diverge only at synthesis, which is where their costs actually differ.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -145,7 +146,24 @@ class TranslationSession:
         self.tts = tts
         self.store = store
 
-        self.chunker = PhraseChunker(config.chunker)
+        # LocalAgreement-n exists to find stability in output that gets
+        # revised. An RNNT hypothesis threaded through previous_hypotheses is
+        # append-only - the model does not take words back - so against such a
+        # backend the agreement window costs a step of latency per unit of n
+        # and buys nothing. Steps land roughly every 560ms, so the default n=2
+        # is about that much pure delay.
+        #
+        # The adapters have advertised revises_hypotheses all along and nothing
+        # read it, so wiring FastConformer in without this would have paid that
+        # cost silently while the whole point was latency.
+        chunker_config = config.chunker
+        if getattr(stt, "revises_hypotheses", True) is False and chunker_config.agreement_n > 1:
+            chunker_config = dataclasses.replace(chunker_config, agreement_n=1)
+            log.info(
+                "backend does not revise; agreement window disabled",
+                extra={"stt": getattr(stt, "name", "?"), "agreement_n": 1},
+            )
+        self.chunker = PhraseChunker(chunker_config)
         self.recorder = LatencyRecorder(slo_seconds=config.slo_seconds)
         self.guard = BacklogGuard(max_lag_s=max_lag_s)
         # drift_policy is the fallback; per-language thresholds come from

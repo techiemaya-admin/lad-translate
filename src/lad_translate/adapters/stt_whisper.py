@@ -182,6 +182,15 @@ class WhisperSttAdapter(SttAdapter):
     # -------------------------------------------------------------------------
 
     @property
+    def revises_hypotheses(self) -> bool:
+        """
+        True: a sliding window re-transcribes audio it has already seen, and
+        the second reading routinely disagrees with the first. That is what the
+        chunker's agreement window is for, so it stays on for this backend.
+        """
+        return True
+
+    @property
     def required_sample_rate(self) -> int:
         return WHISPER_SAMPLE_RATE
 
