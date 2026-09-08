@@ -30,7 +30,7 @@ ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
     --room %i \
     --tenant ${LAD_TRANSLATE_TENANT} \
     --targets ${LAD_TRANSLATE_TARGETS} \
-    --event ${LAD_TRANSLATE_EVENT} \
+    --event "${LAD_TRANSLATE_EVENT}" \
     --model ${LAD_TRANSLATE_STT_MODEL} \
     --stt ${STT_BACKEND} \
     --lookahead ${LAD_TRANSLATE_LOOKAHEAD} \
