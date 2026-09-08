@@ -396,7 +396,15 @@ async def main() -> int:
     if failed:
         for c in failed:
             print(f"  FAILED: {c.name}  {c.detail}")
-    print("\nNOTE latency is not product latency: Whisper is not a streaming model.")
+    # The caveat is Whisper's, not the pipeline's. A sliding-window model
+    # cannot report a latency that means anything to a listener, because the
+    # window is spent before the clock starts. A streaming transducer emits per
+    # step, so its numbers ARE the listener's - printing the old warning under
+    # them would have quietly discredited a real measurement.
+    if args.stt == "faster-whisper":
+        print("\nNOTE latency is not product latency: Whisper is not a streaming model.")
+    else:
+        print(f"\nNOTE these are real streaming latencies: {args.stt} emits per step.")
     return 1 if failed else 0
 
 
