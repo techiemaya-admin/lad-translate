@@ -57,11 +57,30 @@ class DriftPolicy:
 
     max_speed: float = 1.3
     """
-    Ceiling on TTS rate.
+    Ceiling on TTS rate, reached at skip_at_s.
 
     Above roughly 1.3 the output stops sounding like speech and comprehension
     falls faster than the time saved is worth. Raising this is not a free way
     to buy latency.
+    """
+
+    base_speed: float = 1.0
+    """
+    Rate used when the queue is EMPTY, and the floor for the ramp.
+
+    max_speed alone cannot fix a language that is slower than its source,
+    because this controller is reactive: it reads the queue before synthesising
+    and, on an empty queue, chooses 1.0. Raising Arabic's ceiling from 1.3 to
+    1.6 changed its drift by 0.01s for exactly that reason - the ceiling was
+    never reached, because one Arabic phrase is long enough to cross the skip
+    threshold in a single step, from a queue that had nothing in it to react to.
+
+    A language needing more audio than its source is a constant property of the
+    pair, not a transient, so it belongs in a constant. base_speed carries it;
+    the ramp to max_speed still handles genuine transients on top.
+
+    Costs comprehension for the whole talk rather than during catch-up, so it
+    is a listening decision like max_speed and not a tuning constant.
     """
 
     language: str | None = None
@@ -72,6 +91,12 @@ class DriftPolicy:
             raise ValueError("thresholds must increase: comfortable < speedup < skip")
         if self.max_speed < 1.0:
             raise ValueError("max_speed below 1.0 would slow playout and deepen the drift")
+        if self.base_speed < 1.0:
+            raise ValueError("base_speed below 1.0 would slow playout and deepen the drift")
+        if self.base_speed > self.max_speed:
+            # The ramp runs base -> max. Inverted, a growing queue would make
+            # the voice slow DOWN, which deepens exactly what it is meant to fix.
+            raise ValueError("base_speed cannot exceed max_speed")
         if self.skip_at_s - self.speedup_at_s < 0.5:
             # The ramp from normal speed to max_speed spans this gap. Squeeze it
             # and the voice jumps rather than eases, which is far more audible.
@@ -122,8 +147,17 @@ LANGUAGE_POLICIES: dict[str, DriftPolicy] = {
     # slowly and skip occasionally on a long talk. That is the trade a listener
     # picked over speech that stops sounding like speech, and it is the right
     # way round: skipping is visible in the logs, unintelligible audio is not.
+    # base_speed carries the constant part and max_speed the transient part.
+    # Raising max_speed alone moved Arabic's drift from 11.43s to 11.44s,
+    # because on an empty queue the controller chooses base and never reaches
+    # the ceiling - see base_speed above.
     "ar": DriftPolicy(
-        comfortable_s=0.4, speedup_at_s=1.0, skip_at_s=6.0, max_speed=1.6, language="ar"
+        comfortable_s=0.4,
+        speedup_at_s=1.0,
+        skip_at_s=6.0,
+        base_speed=1.5,
+        max_speed=1.6,
+        language="ar",
     ),
 }
 """
@@ -220,10 +254,10 @@ class DriftController:
         policy = self.policy_for(language)
 
         if depth <= policy.speedup_at_s:
-            return 1.0
+            return policy.base_speed
         span = policy.skip_at_s - policy.speedup_at_s
         fraction = min(1.0, (depth - policy.speedup_at_s) / span) if span > 0 else 1.0
-        speed = 1.0 + fraction * (policy.max_speed - 1.0)
+        speed = policy.base_speed + fraction * (policy.max_speed - policy.base_speed)
         state.speedup_phrases += 1
         return round(speed, 3)
 
