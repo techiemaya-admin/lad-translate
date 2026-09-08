@@ -114,6 +114,34 @@ openssl rand -base64 32 | tr -d '\n' \
 Stripe 500 on the billing work happened: the value looks right everywhere you
 read it and fails only where it is compared.
 
+### 1b. Make the service public (once, as a project owner)
+
+Only after the first deploy has created the service, and only once — a Cloud
+Run service's IAM policy belongs to the service rather than to a revision, so
+it survives every later deploy.
+
+```bash
+gcloud run services add-iam-policy-binding lad-translate-dev \
+  --region=me-central1 --member=allUsers --role=roles/run.invoker
+```
+
+This is deliberately not `--allow-unauthenticated` in the build. That flag calls
+`run.services.setIamPolicy`, which **`roles/editor` does not include** — an
+editor can create and update a service but not grant access to it, which is
+Google preventing privilege escalation rather than an oversight. The build
+service account is an editor, so the flag can only warn and continue, leaving a
+service nobody can reach while the deploy reports success.
+
+The alternative is granting the build SA `roles/run.admin`. It is a shared
+account used by every build in this project, so a one-time binding is the
+smaller change. `cloudbuild-develop.yaml` verifies the binding on every build
+and fails if it is missing, which is read-only and works with the roles the SA
+already has.
+
+Being unreachable presents badly: an unauthorised request to a private Cloud
+Run service returns a Google HTML 404, not a 403, so it reads like a missing
+route on a service that is running perfectly.
+
 ### 2. Artifact Registry
 
 Already created in `lad-develop` on 7 Sep 2026. To recreate:
