@@ -27,8 +27,27 @@ the assumption that streaming STT required a GPU.
 The frame arithmetic, which is where this kind of adapter usually goes wrong,
 is pure and IS tested here -- see ChunkSchedule.
 
-STILL UNVERIFIED: this ran on a file, not on a live phone over a network, and
-not yet through the session pipeline with translation and TTS alongside it.
+RAN ON A LIVE PHONE, AND IT NEEDS A VAD BEFORE IT CAN BE USED THERE
+
+The file numbers hold. A room does not. Live, over a phone, this produced:
+
+    span 24.0s  "none seldom didn't sound like failing right hello it's hello"
+    span 48.7s  "you hear me thomas said you i can i can ya okay let me see one"
+
+Not mishearings - text generated from near-silence between sentences. There is
+no silence handling anywhere in this module. stt_whisper.py has twenty five
+references to vad, rms and silence and logs "VAD filter removed 00:05.782 of
+audio" as it runs; this has none, because the streaming path was written
+against a fixture that has no room tone.
+
+The delay a listener heard came from the same gap rather than from this model
+being slow. The chunker commits at max_words or a clause boundary, noise-words
+accumulate slowly, and filling 25 words took 24 to 49 seconds with nothing
+published until it did.
+
+The fix is a real VAD gating frames before the encoder - faster-whisper already
+bundles Silero - and not a threshold bolted on here. Until then the session
+default is faster-whisper. See deploy/vm/session.env.example.
 
 WHY THIS ONE MATTERS MORE THAN THE OTHERS
 

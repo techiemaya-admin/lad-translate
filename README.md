@@ -32,7 +32,7 @@ to a room yet.
 | Session pipeline (`session/pipeline.py`) | Done, 15 tests |
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
 | Browser join page | Done, 38 tests |
-| Streaming STT adapter (FastConformer) | **Run on CPU 8 Sep 2026, RTF 0.07, WER 2.7%**; 37 tests |
+| Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7% on fixture). **NOT usable live: no VAD** |
 
 ## Measured on the dev Mac
 
@@ -921,8 +921,22 @@ no `.nemo` file loads at all, with a `TypeError` that names neither Python nor
 the version. And "multi" in the model name means multiple **lookaheads**, not
 multilingual — this model is English only.
 
-**Still unverified.** This ran on a file, not a live phone over a network, and
-not yet through the session pipeline with translation and TTS alongside it.
+**It has now run on a live phone, and it needs a VAD first.** The file numbers
+hold; a room does not. Over a phone it produced 24 and 48 second spans of text
+generated from near-silence between sentences — not mishearings. There is no
+silence handling in the module: `stt_whisper.py` has twenty-five references to
+vad, rms and silence and logs `VAD filter removed 00:05.782 of audio` as it
+runs, and this has none, because the streaming path was written against a
+fixture with no room tone.
+
+The delay a listener heard came from the same gap. The chunker commits at
+`max_words` or a clause boundary, noise-words accumulate slowly, and filling 25
+words took 24–49 seconds with nothing published until it did.
+
+The session default is back to `faster-whisper` until a real VAD gates frames
+before the encoder — `faster-whisper` already bundles Silero. That is the third
+measurement today that a clean fixture passed and live audio failed, after the
+`/healthz` check that stayed green while the API returned 500.
 
 ## Two GPU backends, written but never run
 
