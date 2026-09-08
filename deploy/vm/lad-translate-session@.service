@@ -32,6 +32,7 @@ ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
     --event ${LAD_TRANSLATE_EVENT} \
     --model ${LAD_TRANSLATE_STT_MODEL} \
     --device ${LAD_TRANSLATE_STT_DEVICE} \
+    --cpu-threads ${LAD_TRANSLATE_STT_THREADS} \
     --emit-interval ${LAD_TRANSLATE_EMIT_INTERVAL} \
     --window ${LAD_TRANSLATE_WINDOW} \
     --wait ${LAD_TRANSLATE_WAIT}

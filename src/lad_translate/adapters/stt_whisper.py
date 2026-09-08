@@ -20,6 +20,7 @@ streaming FastConformer, or Deepgram on-prem.
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 from collections.abc import AsyncIterator
 from typing import Self
@@ -95,6 +96,7 @@ class WhisperSttAdapter(SttAdapter):
         language: str = "en",
         device: str = "cpu",
         compute_type: str | None = None,
+        cpu_threads: int = 0,
         emit_interval: float = 0.5,
         max_window_s: float = 8.0,
         silence_rms: float = 0.005,
@@ -106,6 +108,31 @@ class WhisperSttAdapter(SttAdapter):
         self.language = language
         self.device = device
         self.compute_type = compute_type or ("float16" if device == "cuda" else "int8")
+
+        self.cpu_threads = cpu_threads
+        """
+        Threads for CPU inference. 0 lets ctranslate2 decide.
+
+        Worth setting, because more is emphatically not better. Measured on a
+        32 vCPU n2, one 6s window against the 3.0s emit budget:
+
+            threads    p50     p95     headroom
+            32         2.52s   2.81s   1.07x
+            16         0.62s   0.68s   4.44x
+            8          0.74s   0.80s   3.73x
+            4          0.97s   1.05s   2.86x
+            2          1.54s   1.62s   1.85x
+
+        Handing it every core is FOUR TIMES slower than handing it four, and
+        lands one bad window away from shedding audio. That inverts the obvious
+        intuition, which is the danger: the instinct on a slow box is to make it
+        bigger, and here that makes it worse.
+
+        Leaving this at 0 means the answer changes silently with the machine,
+        so a resize alters latency without anything in the config moving. Pin
+        it, and re-run deploy/vm/benchmark_stt.py when the machine changes.
+        """
+
         self.emit_interval = emit_interval
         """Wall seconds between transcription passes. Lower costs more CPU."""
 
@@ -172,7 +199,13 @@ class WhisperSttAdapter(SttAdapter):
 
         started = time.monotonic()
         self._model = await asyncio.to_thread(
-            WhisperModel, self.model_size, device=self.device, compute_type=self.compute_type
+            functools.partial(
+                WhisperModel,
+                self.model_size,
+                device=self.device,
+                compute_type=self.compute_type,
+                cpu_threads=self.cpu_threads,
+            )
         )
         log.warning(
             "Whisper STT loaded: development only, latency figures are not credible",
@@ -180,6 +213,7 @@ class WhisperSttAdapter(SttAdapter):
                 "model": self.model_size,
                 "device": self.device,
                 "compute_type": self.compute_type,
+                "cpu_threads": self.cpu_threads,
                 "load_s": round(time.monotonic() - started, 2),
             },
         )

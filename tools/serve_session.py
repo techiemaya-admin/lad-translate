@@ -53,6 +53,10 @@ async def main() -> int:
     # The GPU box passes --device cuda, which is the whole reason it exists:
     # without it faster-whisper loads int8 on CPU and the L4 sits idle.
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    # 0 lets ctranslate2 decide, which makes latency a property of the machine
+    # rather than of the config. On a 32 vCPU box its default runs 4x slower
+    # than 4 threads does - see adapters/stt_whisper.py:cpu_threads.
+    ap.add_argument("--cpu-threads", type=int, default=0)
     ap.add_argument("--emit-interval", type=float, default=3.0)
     ap.add_argument("--window", type=float, default=6.0)
     ap.add_argument("--wait", type=float, default=900.0,
@@ -113,7 +117,7 @@ async def main() -> int:
     print("\n  waiting for a speaker...\n", flush=True)
 
     async with WhisperSttAdapter(
-        model_size=args.model, device=args.device,
+        model_size=args.model, device=args.device, cpu_threads=args.cpu_threads,
         emit_interval=args.emit_interval, max_window_s=args.window
     ) as stt, tts:
         session = TranslationSession(
