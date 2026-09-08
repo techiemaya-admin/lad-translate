@@ -1,0 +1,31 @@
+[Unit]
+Description=LAD Live Translation operator console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ladtranslate
+Group=ladtranslate
+WorkingDirectory=/opt/lad-translate
+EnvironmentFile=/etc/lad-translate/console.env
+
+# 127.0.0.1 on purpose. Caddy terminates TLS and applies basic auth in front of
+# this; binding it outward would put a surface that restarts sessions and
+# rewrites settings on the internet with no credentials at all.
+ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_console.py \
+    --host 127.0.0.1 --port 8090
+
+Restart=always
+RestartSec=5
+
+# It manages units through a narrow sudoers rule rather than running as root.
+# A web service that IS root is a browser one bug away from the box.
+NoNewPrivileges=false
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

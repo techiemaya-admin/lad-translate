@@ -1,0 +1,82 @@
+:root {
+  --bg: #0f1115; --panel: #171a21; --line: #262b36;
+  --ink: #e6e9ef; --dim: #9aa3b2; --accent: #5b9dff;
+  --ok: #43c07a; --warn: #e0a33e; --bad: #e3564a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+h1 { font-size: 1.05rem; margin: 0; font-weight: 600; letter-spacing: .01em; }
+h2 { font-size: .95rem; margin: 0 0 .6rem; font-weight: 600;
+     display: flex; align-items: center; gap: .5rem; }
+.room { display: flex; align-items: center; gap: .5rem; }
+.room label { color: var(--dim); font-size: .85rem; }
+input, select {
+  background: #0c0e13; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: .4rem .55rem; font: inherit; font-size: .9rem;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+main {
+  display: grid; gap: 1rem; padding: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: start;
+  max-width: 1200px; margin: 0 auto;
+}
+.panel { background: var(--panel); border: 1px solid var(--line);
+         border-radius: 10px; padding: 1rem 1.1rem; }
+.note { color: var(--dim); font-size: .85rem; margin: .25rem 0 .8rem; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem .9rem; margin: 0 0 .6rem; }
+dt { color: var(--dim); font-size: .85rem; }
+dd { margin: 0; font-variant-numeric: tabular-nums; }
+dd.bad { color: var(--bad); } dd.warn { color: var(--warn); } dd.ok { color: var(--ok); }
+.pill { font-size: .72rem; padding: .12rem .5rem; border-radius: 999px;
+        background: #222732; color: var(--dim); font-weight: 500; }
+.pill.on  { background: rgba(67,192,122,.16); color: var(--ok); }
+.pill.off { background: rgba(227,86,74,.16); color: var(--bad); }
+.actions { display: flex; gap: .5rem; margin-top: .8rem; flex-wrap: wrap; }
+button {
+  background: #222732; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 7px; padding: .5rem .9rem; font: inherit; font-size: .88rem; cursor: pointer;
+}
+button:hover { border-color: #38404f; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 600; }
+button.link { background: none; border: none; color: var(--accent); padding: 0; font-size: .82rem; }
+button[disabled] { opacity: .5; cursor: not-allowed; }
+.preset {
+  border: 1px solid var(--line); border-radius: 8px; padding: .7rem .8rem;
+  margin-bottom: .55rem; cursor: pointer; background: #131720;
+}
+.preset:hover { border-color: #38404f; }
+.preset.selected { border-color: var(--accent); background: rgba(91,157,255,.07); }
+.preset h3 { margin: 0 0 .2rem; font-size: .9rem; display: flex; gap: .5rem; align-items: center; }
+.preset p { margin: .15rem 0; font-size: .82rem; color: var(--dim); }
+.preset .measured { color: #b6becc; }
+.preset .warning {
+  color: var(--warn); border-left: 2px solid var(--warn);
+  padding-left: .55rem; margin-top: .4rem;
+}
+.qr-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; }
+.qr-pair figure { margin: 0; text-align: center; }
+.qr-pair img {
+  width: 100%; max-width: 190px; background: #fff; padding: 6px;
+  border-radius: 8px; display: block; margin: 0 auto;
+}
+figcaption { font-size: .8rem; color: var(--dim); margin-top: .35rem; }
+code { font-size: .68rem; color: #7f8899; word-break: break-all; display: block; margin-top: .2rem; }
+#advanced { display: grid; gap: .55rem; }
+.field { display: grid; grid-template-columns: 1fr auto; gap: .5rem; align-items: center; }
+.field label { font-size: .84rem; color: var(--dim); }
+.field input { width: 11rem; }
+#toast {
+  position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%);
+  background: #222732; border: 1px solid var(--line); border-radius: 8px;
+  padding: .6rem 1rem; font-size: .87rem; max-width: 90vw;
+}
+#toast.bad { border-color: var(--bad); color: #ffb9b3; }
+@media (max-width: 560px) { .qr-pair { grid-template-columns: 1fr; } }

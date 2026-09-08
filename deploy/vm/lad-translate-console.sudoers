@@ -1,0 +1,10 @@
+# The console runs as ladtranslate and needs exactly three verbs on exactly one
+# unit pattern. Installed to /etc/sudoers.d/lad-translate-console, mode 0440.
+#
+# Deliberately not "ALL": this account serves a web page, and the blast radius
+# of a bug in it should be restarting a translation session and nothing else.
+# The unit name is templated, so the wildcard is bounded by systemd's own
+# escaping and by the room validation in console/sessions.py.
+ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl restart lad-translate-session@*.service
+ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl stop lad-translate-session@*.service
+ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl start lad-translate-session@*.service

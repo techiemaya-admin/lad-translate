@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LAD Live Translation — console</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+  <header>
+    <h1>Live Translation</h1>
+    <div class="room">
+      <label for="room">Room</label>
+      <input id="room" value="dubai-demo" spellcheck="false" autocapitalize="off">
+    </div>
+  </header>
+
+  <main>
+    <section class="panel" id="status-panel">
+      <h2>Session <span id="pill" class="pill">…</span></h2>
+      <dl id="status"></dl>
+      <p class="note" id="status-note"></p>
+      <div class="actions">
+        <button id="restart" class="primary">Apply &amp; restart</button>
+        <button id="stop">Stop</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Preset</h2>
+      <p class="note">
+        Each carries what it actually measured. The warnings are the point:
+        a pair that looked better on paper dropped 225 seconds of live speech.
+      </p>
+      <div id="presets"></div>
+    </section>
+
+    <section class="panel">
+      <h2>QR codes</h2>
+      <p class="note">
+        Room URLs, so they survive a restart. Scan the speaker code and start
+        talking <em>before</em> joining as a listener.
+      </p>
+      <div class="qr-pair">
+        <figure><img id="qr-speak" alt="Speaker QR code"><figcaption>Speaker — publishes the mic</figcaption><code id="url-speak"></code></figure>
+        <figure><img id="qr-listen" alt="Listener QR code"><figcaption>Listener — picks a language</figcaption><code id="url-listen"></code></figure>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>
+        Advanced
+        <button id="toggle-advanced" class="link" aria-expanded="false">show</button>
+      </h2>
+      <p class="note">
+        Raw values. <strong>emit interval and window move together</strong> —
+        changing one alone is how the pipeline ends up shedding audio.
+      </p>
+      <div id="advanced" hidden></div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/console.js"></script>
+</body>
+</html>

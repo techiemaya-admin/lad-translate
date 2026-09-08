@@ -11,5 +11,23 @@
 # TCP 7881 on the VM's external IP; proxying it would be pointless and slow.
 
 {$LAD_TRANSLATE_SFU_HOST} {
-	reverse_proxy localhost:7880
+	# The operator console. It can restart sessions and rewrite settings, so it
+	# is behind basic auth and bound to localhost on the app side - unlike the
+	# join service, which is deliberately unauthenticated because a listener
+	# scans a QR code and has no credentials.
+	#
+	# Ordered before the catch-all: Caddy matches the most specific route, but
+	# writing it first keeps the intent obvious to anyone editing this.
+	handle /console* {
+		basic_auth {
+			operator {$LAD_TRANSLATE_CONSOLE_HASH}
+		}
+		uri strip_prefix /console
+		reverse_proxy localhost:8090
+	}
+
+	# Everything else is LiveKit's signalling connection.
+	handle {
+		reverse_proxy localhost:7880
+	}
 }
