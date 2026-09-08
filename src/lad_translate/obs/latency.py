@@ -52,8 +52,21 @@ class AudioClock:
     Maps a position in the source audio to the wall time it arrived.
 
     A live stream arrives in real time, so the mapping is a fixed offset. It is
-    established from the first frame and never adjusted, which means clock drift
-    on the publisher shows up in the latency figures rather than being hidden.
+    established from the first frame and not adjusted for drift, which means
+    clock drift on the publisher shows up in the latency figures rather than
+    being hidden.
+
+    It IS adjusted when the stream stops arriving, because that is not drift.
+    room.py accumulates t_audio from the frames themselves, so it advances only
+    while audio is being received while wall time advances regardless. A
+    speaker who reconnects - or a network that stalls - leaves the two apart by
+    the length of the gap, and every later reading is wrong by that much.
+
+    Measured on a real phone: a speaker reconnected twice, 44s and 36s into a
+    session, and every subsequent chunk reported roughly 20 seconds of latency
+    with a hard floor at 17.7s. Nothing ever came in under it, which is what an
+    added constant looks like as opposed to a slow stage. The audience was
+    hearing translation about a second behind.
     """
 
     __slots__ = ("_epoch",)
@@ -65,6 +78,17 @@ class AudioClock:
         """Set the mapping from the first audio frame of the session."""
         if self._epoch is None:
             self._epoch = t_wall - t_audio
+
+    def reanchor(self, t_audio: float, t_wall: float) -> None:
+        """
+        Re-establish the mapping after the stream stopped arriving.
+
+        Deliberately separate from anchor(), which ignores a second call. Two
+        callers wanting opposite things from one method is how the original bug
+        survived: the pipeline could have called anchor() on every frame and
+        nothing would have changed.
+        """
+        self._epoch = t_wall - t_audio
 
     @property
     def anchored(self) -> bool:
