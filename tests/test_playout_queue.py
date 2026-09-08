@@ -19,16 +19,38 @@ never hand the source more than it can hold.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import sys
 import types
 
 import pytest
 
-# livekit.rtc is not a test dependency - the model backends and the transport
-# are both excluded from CI on purpose. push() needs exactly one symbol from
-# it, AudioFrame, and it is a plain data carrier, so a stand-in is honest here
-# rather than a mock of behaviour we then assert on.
-if "livekit.rtc" not in sys.modules:
+from lad_translate.session import room as room_mod
+
+
+@pytest.fixture(autouse=True)
+def stub_livekit_rtc(monkeypatch):
+    """
+    Stand in for livekit.rtc, but only inside these tests.
+
+    An earlier version installed the stub at import time with
+    sys.modules.setdefault("livekit", ...). setdefault returns the REAL module
+    when livekit is installed, so assigning .rtc onto it replaced the real
+    submodule for the whole process - nine token tests failed with an
+    ImportError that pointed at their own imports rather than at this file.
+
+    monkeypatch.setitem is undone per test, so nothing leaks either way.
+
+    push() needs one symbol, AudioFrame, and it is a plain data carrier: a
+    stand-in is honest here rather than a mock of behaviour we then assert on.
+    """
+    if importlib.util.find_spec("livekit") is not None:
+        try:
+            import livekit.rtc
+            return  # the real thing is present; use it
+        except ImportError:
+            pass
+
     class _AudioFrame:
         def __init__(self, data, sample_rate, num_channels, samples_per_channel):
             self.data = data
@@ -36,13 +58,13 @@ if "livekit.rtc" not in sys.modules:
             self.num_channels = num_channels
             self.samples_per_channel = samples_per_channel
 
-    _livekit = sys.modules.setdefault("livekit", types.ModuleType("livekit"))
-    _rtc = types.ModuleType("livekit.rtc")
-    _rtc.AudioFrame = _AudioFrame
-    _livekit.rtc = _rtc
-    sys.modules["livekit.rtc"] = _rtc
+    livekit = types.ModuleType("livekit")
+    rtc = types.ModuleType("livekit.rtc")
+    rtc.AudioFrame = _AudioFrame
+    livekit.rtc = rtc
+    monkeypatch.setitem(sys.modules, "livekit", livekit)
+    monkeypatch.setitem(sys.modules, "livekit.rtc", rtc)
 
-from lad_translate.session import room as room_mod
 
 
 class FakeSource:
@@ -90,8 +112,11 @@ async def test_push_waits_rather_than_overflowing():
         await asyncio.sleep(0.15)
         source.drain(6.0)
 
-    asyncio.create_task(drain_soon())
-    await r.push("ar", pcm_of(2.0), 16000)
+    drainer = asyncio.create_task(drain_soon())
+    try:
+        await r.push("ar", pcm_of(2.0), 16000)
+    finally:
+        await drainer
 
     assert source.captured_s == pytest.approx([11.0, 2.0]), "the phrase was lost"
     assert source.queued_duration <= room_mod.PLAYOUT_QUEUE_MS / 1000.0
