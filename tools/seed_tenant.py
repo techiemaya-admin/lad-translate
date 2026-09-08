@@ -66,7 +66,12 @@ async def run(args) -> int:
             await migrate.apply_tenant(pool, existing[1])
             return 0
 
-        tenant_id = str(uuid.uuid4())
+        # --id exists so this directory can agree with the platform's on who a
+        # tenant is. lad-translate keeps its OWN control schema, because
+        # lad_dev.tenants is Mr LAD's table with a different shape and 20 live
+        # rows. Two directories describing the same tenant should at least
+        # share its identifier, or every later cross-reference is a slug join.
+        tenant_id = args.id or str(uuid.uuid4())
         await pool.execute(
             f"""INSERT INTO {control}.tenants (id, slug, schema_name, display_name)
                 VALUES ($1::uuid, $2, $3, $4)""",
@@ -89,6 +94,7 @@ def main() -> int:
     ap.add_argument("--slug")
     ap.add_argument("--schema", help="override the derived schema name")
     ap.add_argument("--display-name")
+    ap.add_argument("--id", help="pin the tenant uuid (e.g. to match the platform's)")
     ap.add_argument("--url", help="database URL (default: LAD_DATABASE_URL)")
     ap.add_argument("--control", help="control schema (default: LAD_CONTROL_SCHEMA)")
     ap.add_argument("--list", action="store_true")

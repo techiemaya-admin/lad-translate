@@ -35,6 +35,7 @@ from lad_translate.config import (
     SessionLimits,
     TenantContext,
 )
+from lad_translate.db.pool import control_schema
 from lad_translate.db.sessions import SessionStore
 from lad_translate.obs.log import configure, get_logger
 from lad_translate.session.pipeline import TranslationSession
@@ -46,6 +47,7 @@ log = get_logger("serve_session")
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--room", default="demo-room")
+    ap.add_argument("--tenant", default="techiemaya", help="tenant slug in the control schema")
     ap.add_argument("--targets", default="fr,ar")
     ap.add_argument("--event", default="Live speaker test")
     ap.add_argument("--model", default="tiny")
@@ -70,9 +72,22 @@ async def main() -> int:
     import asyncpg
 
     pool = await asyncpg.create_pool(db_url, min_size=1, max_size=3)
+    # Was: a literal lad_dev.tenants and a literal slug. Both were wrong the
+    # moment this ran anywhere real - lad_dev is Mr LAD's control schema and
+    # its tenants table has neither schema_name nor is_active, so the query
+    # died with UndefinedColumnError on the first session. lad-translate owns
+    # its own control schema; see deploy/README.md.
+    control = control_schema()
     row = await pool.fetchrow(
-        "SELECT id::text, schema_name FROM lad_dev.tenants WHERE slug='techiemaya'"
+        f"SELECT id::text, schema_name FROM {control}.tenants WHERE slug = $1 AND is_active",
+        args.tenant,
     )
+    if row is None:
+        log.error(
+            "tenant not found; seed it with tools/seed_tenant.py",
+            extra={"tenant": args.tenant, "control_schema": control},
+        )
+        return 1
     tenant = TenantContext(tenant_id=row[0], database_url=db_url, schema=row[1])
     store = SessionStore(pool, tenant)
 
