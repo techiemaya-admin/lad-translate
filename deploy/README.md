@@ -296,7 +296,22 @@ gcloud compute firewall-rules create lad-translate-sfu-web \
 gcloud compute firewall-rules create lad-translate-sfu-media \
   --allow=udp:50000-60000,tcp:7881 --target-tags=lad-translate-sfu \
   --description="WebRTC media, and the TCP fallback for UDP-blocked wifi"
+
+# HTTP/3. Not optional, despite sounding like it.
+gcloud compute firewall-rules create lad-translate-sfu-h3 \
+  --allow=udp:443 --target-tags=lad-translate-sfu \
+  --description="QUIC. Caddy advertises alt-svc h3=:443 whether or not this exists"
 ```
+
+**The h3 rule is the one that looks skippable and is not.** Caddy listens on
+UDP 443 and sends `alt-svc: h3=":443"` on every response. A browser caches that
+advertisement and tries QUIC on the next visit; with the port closed the packets
+are dropped and the page stalls or fails, while curl — which speaks HTTP/2 over
+TCP — keeps reporting 200. It presents as "works for me, will not open for you",
+and nothing in any log mentions it, because the packets never arrive.
+
+Either open the port or stop advertising the protocol. Advertising one the
+network drops is a black hole of our own making.
 
 Port 7880 stays closed to the internet. Caddy fronts it on 443; the worker
 reaches it on localhost.
