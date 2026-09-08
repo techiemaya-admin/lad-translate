@@ -85,6 +85,21 @@ transport fault rather than a queue that is simply full. `push` now waits for
 room instead of finding out this way.
 """
 
+PUSH_FRAME_MS = 100
+"""
+How much audio goes to the source in one capture_frame call.
+
+Piper renders a whole sentence before releasing any of it, so a phrase arrives
+as one blob - 25.86 seconds of Arabic in one measured case. Handing that to a
+12 second queue fails no matter how long anything waits, because the frame is
+larger than the buffer rather than the buffer being busy. The first version of
+this fix waited five seconds against an EMPTY queue and then dropped the
+phrase, which is how the distinction came to light.
+
+Slicing makes the wait meaningful: 100ms always fits eventually, so audio is
+paced into the source as it drains instead of being refused whole.
+"""
+
 PUSH_WAIT_TIMEOUT_S = 5.0
 """
 How long push() waits for playout room before giving up on a phrase.
@@ -316,50 +331,47 @@ class TranslationRoom:
         if samples == 0:
             return
 
-        # Ask whether it fits before pushing it. capture_frame on a full source
-        # raises InvalidState, which loses the phrase AND reports it as a
-        # transport error, so the real cause - a queue that is simply full -
-        # has to be inferred from a drift number logged seconds later.
-        frame_s = samples / sample_rate
+        # Slice the phrase and pace it in, rather than offering the whole thing
+        # and hoping it fits. capture_frame on an over-full source raises
+        # InvalidState, which loses the audio and blames the transport; and a
+        # phrase can exceed the whole buffer on its own, in which case no amount
+        # of waiting helps.
         capacity_s = PLAYOUT_QUEUE_MS / 1000.0
-        deadline = time.monotonic() + PUSH_WAIT_TIMEOUT_S
-        waited = False
-        while float(entry.source.queued_duration) + frame_s > capacity_s:
-            if time.monotonic() >= deadline:
-                # Dropped on purpose, and loudly. The alternative is an
-                # exception that kills the phrase anyway while naming the wrong
-                # cause.
-                log.error(
-                    "playout queue full, dropping audio",
-                    extra={
-                        "language": language,
-                        "frame_s": round(frame_s, 2),
-                        "queued_s": round(float(entry.source.queued_duration), 2),
-                        "capacity_s": capacity_s,
-                        "waited_s": PUSH_WAIT_TIMEOUT_S,
-                    },
+        step = max(1, int(sample_rate * PUSH_FRAME_MS / 1000))
+        bytes_per_sample = 2 * self.num_channels
+
+        for start in range(0, samples, step):
+            count = min(step, samples - start)
+            piece = pcm[start * bytes_per_sample : (start + count) * bytes_per_sample]
+            piece_s = count / sample_rate
+
+            deadline = time.monotonic() + PUSH_WAIT_TIMEOUT_S
+            while float(entry.source.queued_duration) + piece_s > capacity_s:
+                if time.monotonic() >= deadline:
+                    # A source this stuck is not going to drain. Shed the rest
+                    # of the phrase and say so, with the numbers that explain
+                    # it: the old failure named the transport instead.
+                    log.error(
+                        "playout queue not draining, dropping rest of phrase",
+                        extra={
+                            "language": language,
+                            "queued_s": round(float(entry.source.queued_duration), 2),
+                            "capacity_s": capacity_s,
+                            "dropped_s": round((samples - start) / sample_rate, 2),
+                            "waited_s": PUSH_WAIT_TIMEOUT_S,
+                        },
+                    )
+                    return
+                await asyncio.sleep(0.02)
+
+            await entry.source.capture_frame(
+                rtc.AudioFrame(
+                    data=piece,
+                    sample_rate=sample_rate,
+                    num_channels=self.num_channels,
+                    samples_per_channel=count,
                 )
-                return
-            waited = True
-            await asyncio.sleep(0.05)
-
-        if waited:
-            log.warning(
-                "waited for playout room before publishing",
-                extra={
-                    "language": language,
-                    "queued_s": round(float(entry.source.queued_duration), 2),
-                },
             )
-
-        await entry.source.capture_frame(
-            rtc.AudioFrame(
-                data=pcm,
-                sample_rate=sample_rate,
-                num_channels=self.num_channels,
-                samples_per_channel=samples,
-            )
-        )
         entry.frames_published += 1
         entry.seconds_published += samples / sample_rate
 
