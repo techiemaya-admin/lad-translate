@@ -54,6 +54,7 @@
   var room = null;
   var listenerId = null;
   var wantedTrack = null;
+  var chosenLang = null;
   var info = null;
   var audioTimer = null;
   var resolvedSession = "";
@@ -158,6 +159,7 @@
   }
 
   function connect(lang) {
+    chosenLang = lang;
     return fetch(apiBase() + "/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -198,12 +200,7 @@
         subscribeToWanted();
         status("Connected, waiting for audio…", "warn");
         clearTimeout(audioTimer);
-        audioTimer = setTimeout(function () {
-          fail(
-            "Connected, but no audio is being sent for this language yet. " +
-            "It may not have started. Try another language, or try again shortly."
-          );
-        }, AUDIO_TIMEOUT_MS);
+        audioTimer = setTimeout(explainSilence, AUDIO_TIMEOUT_MS);
       });
   }
 
@@ -253,6 +250,59 @@
     });
   }
 
+  function explainSilence() {
+    // Silence has two causes and they need opposite advice, so ask the room
+    // which one this is rather than guessing.
+    //
+    // The old message said "no audio is being sent for this language yet ...
+    // Try another language". When the real cause is that nobody has started
+    // talking, that sentence blames the language and sends the listener off to
+    // try the others, which are equally silent for the same reason. A listener
+    // sat on French for ten minutes before a talk began, left ten seconds
+    // before the first word, and reasonably concluded French was broken.
+    //
+    // The source track is the tell. /api/rooms reports it as the is_source
+    // language, and RoomInspector marks it available only when the speaker is
+    // actually publishing, so its absence means the room is quiet - not that
+    // this particular language is.
+    fetch(apiBase())
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        var langs = (data && data.languages) || [];
+        var source = null;
+        var mine = null;
+        langs.forEach(function (l) {
+          if (l.is_source) source = l;
+          if (chosenLang && l.code === chosenLang.code) mine = l;
+        });
+
+        if (source && source.available === false) {
+          // Not a failure. Keep the connection and keep waiting: the moment
+          // the speaker starts, TrackPublished fires and audio begins.
+          status("Waiting for the speaker to start…", "warn");
+          audioTimer = setTimeout(explainSilence, AUDIO_TIMEOUT_MS);
+          return;
+        }
+
+        if (mine && mine.available === false) {
+          fail(
+            "The speaker is live, but this language is not being translated " +
+            "right now. Try another language."
+          );
+          return;
+        }
+
+        fail(
+          "Connected to a live talk, but no audio has arrived for this " +
+          "language. Try another language, or rejoin."
+        );
+      })
+      .catch(function () {
+        status("Waiting for audio…", "warn");
+        audioTimer = setTimeout(explainSilence, AUDIO_TIMEOUT_MS);
+      });
+  }
+
   function blockedPlayback() {
     // The browser refused playback despite the gesture. Give the listener an
     // obvious second chance rather than leaving them in silence.
@@ -289,6 +339,7 @@
     if (room) { room.disconnect(); room = null; }
     listenerId = null;
     wantedTrack = null;
+    chosenLang = null;
   }
 
   function leave() {
