@@ -28,6 +28,15 @@ log = get_logger(__name__)
 
 STATIC_DIR = Path(__file__).parent.parent / "api" / "static"
 
+PREFIX = "/console"
+"""
+Every route carries it, and Caddy passes the prefix through untouched.
+
+The alternative - strip it at the proxy and serve from the root - is what broke
+the first deploy: the page's absolute asset paths landed outside the protected
+route and the browser re-prompted for credentials on every one.
+"""
+
 
 class ApplyRequest(BaseModel):
     room: str = Field(min_length=1, max_length=63)
@@ -46,21 +55,34 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
     app.state.public_base = public_base.rstrip("/")
     app.state.env_path = env_path or env.DEFAULT_PATH
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    # Everything lives under /console, and Caddy does NOT strip the prefix.
+    #
+    # It used to strip it, and the page asked the browser for /static/console.css
+    # and /api/presets - absolute paths that then fell outside the console route
+    # entirely. Every one came back 401, so the browser re-prompted for
+    # credentials on each asset and the console looked like a login that would
+    # not take a correct password.
+    #
+    # Relative paths would have fixed the assets and left a trailing-slash trap:
+    # served at /console they resolve against /, served at /console/ against
+    # /console/. Owning the prefix removes the class of bug rather than the
+    # instance.
+    app.mount(f"{PREFIX}/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    @app.get("/health")
+    @app.get(f"{PREFIX}/health")
     async def health():
         return {"ok": True}
 
-    @app.get("/")
+    @app.get(PREFIX)
+    @app.get(f"{PREFIX}/")
     async def page():
         return FileResponse(STATIC_DIR / "console.html")
 
-    @app.get("/api/presets")
+    @app.get(f"{PREFIX}/api/presets")
     async def presets():
         return {"presets": [p.as_dict() for p in PRESETS]}
 
-    @app.get("/api/settings")
+    @app.get(f"{PREFIX}/api/settings")
     async def settings():
         current = env.read(app.state.env_path)
         return {
@@ -69,14 +91,14 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
             "public_base": app.state.public_base,
         }
 
-    @app.get("/api/status")
+    @app.get(f"{PREFIX}/api/status")
     async def status(room: str = "dubai-demo"):
         try:
             return (await sessions.status(room)).__dict__
         except sessions.BadRoom as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    @app.post("/api/apply")
+    @app.post(f"{PREFIX}/api/apply")
     async def apply(body: ApplyRequest):
         try:
             sessions.validate_room(body.room)
@@ -120,7 +142,7 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
         )
         return {"changed": changed, "restarted": restarted}
 
-    @app.post("/api/stop")
+    @app.post(f"{PREFIX}/api/stop")
     async def stop(body: ApplyRequest):
         try:
             await sessions.stop(body.room)
@@ -130,7 +152,7 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
             raise HTTPException(500, str(exc)) from exc
         return {"stopped": True}
 
-    @app.get("/api/qr")
+    @app.get(f"{PREFIX}/api/qr")
     async def qr(room: str, kind: str = "listen"):
         """
         The QR code, as a PNG.

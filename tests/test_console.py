@@ -17,6 +17,7 @@ from lad_translate.console import env, sessions
 from lad_translate.console.app import create_app
 
 PUBLIC = "https://join.example.test"
+CONSOLE = "/console"   # the app owns the prefix; Caddy does not strip it
 
 SAMPLE = """# a comment that must survive a write
 LAD_CONTROL_SCHEMA=lad_translate_dev
@@ -99,7 +100,7 @@ def test_ordinary_room_names_are_accepted(ok: str):
 
 
 def test_the_api_refuses_a_bad_room_before_touching_systemd(client: TestClient):
-    r = client.post("/api/apply", json={"room": "a;rm -rf /", "preset": "live-safe"})
+    r = client.post("/console/api/apply", json={"room": "a;rm -rf /", "preset": "live-safe"})
     assert r.status_code == 400
 
 
@@ -107,7 +108,7 @@ def test_the_api_refuses_a_bad_room_before_touching_systemd(client: TestClient):
 
 def test_every_preset_carries_its_measurement(client: TestClient):
     """A preset without evidence is a slider with a nicer name."""
-    presets = client.get("/api/presets").json()["presets"]
+    presets = client.get("/console/api/presets").json()["presets"]
     assert presets
     for p in presets:
         assert p["measured"].strip(), f"{p['key']} has no measurement"
@@ -119,13 +120,13 @@ def test_the_dangerous_presets_carry_warnings(client: TestClient):
     streaming has no VAD. If either ever loses its warning, the console is
     actively misleading rather than merely incomplete.
     """
-    by_key = {p["key"]: p for p in client.get("/api/presets").json()["presets"]}
+    by_key = {p["key"]: p for p in client.get("/console/api/presets").json()["presets"]}
     for key in ("low-latency", "streaming"):
         assert by_key[key]["warning"], f"{key} must keep its warning"
 
 
 def test_applying_a_preset_writes_its_values(client: TestClient, env_file: Path):
-    r = client.post("/api/apply", json={"room": "hall-a", "preset": "accurate",
+    r = client.post("/console/api/apply", json={"room": "hall-a", "preset": "accurate",
                                         "restart": False})
     assert r.status_code == 200
     settings = env.read(env_file)
@@ -136,7 +137,7 @@ def test_applying_a_preset_writes_its_values(client: TestClient, env_file: Path)
 
 def test_raw_settings_win_over_the_preset(client: TestClient, env_file: Path):
     """"Pick a preset, then adjust one field" has to do what it looks like."""
-    client.post("/api/apply", json={
+    client.post("/console/api/apply", json={
         "room": "hall-a", "preset": "accurate", "restart": False,
         "settings": {"LAD_TRANSLATE_STT_MODEL": "tiny"},
     })
@@ -144,7 +145,7 @@ def test_raw_settings_win_over_the_preset(client: TestClient, env_file: Path):
 
 
 def test_an_unknown_preset_is_refused(client: TestClient):
-    r = client.post("/api/apply", json={"room": "hall-a", "preset": "fastest",
+    r = client.post("/console/api/apply", json={"room": "hall-a", "preset": "fastest",
                                         "restart": False})
     assert r.status_code == 400
 
@@ -157,14 +158,14 @@ def test_qr_encodes_a_room_url_not_a_session_id(client: TestClient):
     of paper pointing at a 404 the first time a worker restarts, which is a
     failure that happens at a venue and cannot be fixed by reprinting.
     """
-    r = client.get("/api/qr", params={"room": "dubai-demo", "kind": "listen"})
+    r = client.get("/console/api/qr", params={"room": "dubai-demo", "kind": "listen"})
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
     assert r.headers["X-Encoded-Url"] == f"{PUBLIC}/room/dubai-demo"
 
 
 def test_the_speaker_code_points_at_the_publish_page(client: TestClient):
-    r = client.get("/api/qr", params={"room": "dubai-demo", "kind": "speak"})
+    r = client.get("/console/api/qr", params={"room": "dubai-demo", "kind": "speak"})
     assert r.headers["X-Encoded-Url"] == f"{PUBLIC}/room/dubai-demo/speak"
 
 
@@ -173,9 +174,34 @@ def test_qr_points_at_the_join_service_not_this_box(client: TestClient):
     The console runs on the SFU host. A phone cannot reach it, and it is behind
     basic auth in any case, so a code pointing here is a code nobody can use.
     """
-    url = client.get("/api/qr", params={"room": "hall-a"}).headers["X-Encoded-Url"]
+    url = client.get("/console/api/qr", params={"room": "hall-a"}).headers["X-Encoded-Url"]
     assert url.startswith(PUBLIC)
 
 
 def test_qr_refuses_an_unknown_kind(client: TestClient):
-    assert client.get("/api/qr", params={"room": "hall-a", "kind": "print"}).status_code == 400
+    assert client.get("/console/api/qr", params={"room": "hall-a", "kind": "print"}).status_code == 400
+
+
+def test_the_page_asks_for_assets_under_the_prefix(client: TestClient):
+    """
+    The bug that looked like a broken password.
+
+    Caddy used to strip /console, so the page's absolute asset paths landed
+    outside the protected route. Every one returned 401, the browser re-prompted
+    on each, and a correct password appeared not to work. The page and the mount
+    have to agree, so this asserts they do.
+    """
+    page = client.get("/console").text
+    assert '/console/static/console.css' in page
+    assert '/console/static/console.js' in page
+    assert 'href="/static/' not in page and 'src="/static/' not in page
+
+    assert client.get("/console/static/console.css").status_code == 200
+    assert client.get("/console/static/console.js").status_code == 200
+
+
+def test_the_script_calls_the_api_under_the_prefix(client: TestClient):
+    """Same failure one layer down: fetches must not escape the mount either."""
+    script = client.get("/console/static/console.js").text
+    assert 'BASE = "/console"' in script
+    assert 'fetch("/api/' not in script

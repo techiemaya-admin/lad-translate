@@ -31,6 +31,10 @@
     urlListen: document.getElementById("url-listen")
   };
 
+  // Absolute and prefixed, matching where the app actually serves. Relative
+  // would depend on whether the browser landed on /console or /console/.
+  var BASE = "/console";
+
   var chosenPreset = null;
   var editable = [];
   var publicBase = "";
@@ -67,7 +71,7 @@
 
   function refreshStatus() {
     if (!room()) return;
-    api("/api/status?room=" + encodeURIComponent(room())).then(function (s) {
+    api(BASE + "/api/status?room=" + encodeURIComponent(room())).then(function (s) {
       el.status.innerHTML = "";
       el.pill.textContent = s.active ? "running" : "stopped";
       el.pill.className = "pill " + (s.active ? "on" : "off");
@@ -184,8 +188,8 @@
   function refreshQr() {
     if (!room() || !publicBase) return;
     var stamp = Date.now();   // defeat the cache when the room changes
-    el.qrSpeak.src = "/api/qr?kind=speak&room=" + encodeURIComponent(room()) + "&t=" + stamp;
-    el.qrListen.src = "/api/qr?kind=listen&room=" + encodeURIComponent(room()) + "&t=" + stamp;
+    el.qrSpeak.src = BASE + "/api/qr?kind=speak&room=" + encodeURIComponent(room()) + "&t=" + stamp;
+    el.qrListen.src = BASE + "/api/qr?kind=listen&room=" + encodeURIComponent(room()) + "&t=" + stamp;
     el.urlSpeak.textContent = publicBase + "/room/" + room() + "/speak";
     el.urlListen.textContent = publicBase + "/room/" + room();
   }
@@ -202,7 +206,7 @@
       restart: true
     };
     el.restart.disabled = true;
-    api("/api/apply", {
+    api(BASE + "/api/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -220,7 +224,7 @@
   }
 
   function stop() {
-    api("/api/stop", {
+    api(BASE + "/api/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ room: room() })
@@ -233,7 +237,7 @@
   // --- boot -----------------------------------------------------------------
 
   function load() {
-    return Promise.all([api("/api/presets"), api("/api/settings")])
+    return Promise.all([api(BASE + "/api/presets"), api(BASE + "/api/settings")])
       .then(function (both) {
         renderPresets(both[0].presets);
         editable = both[1].editable;
