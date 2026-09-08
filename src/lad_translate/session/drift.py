@@ -97,10 +97,34 @@ LANGUAGE_POLICIES: dict[str, DriftPolicy] = {
     # sooner rather than harder: an earlier speedup_at_s lengthens the ramp and
     # gives the controller more total corrective capacity before the ceiling.
     #
-    # max_speed is deliberately NOT raised. Whether Arabic stays intelligible
-    # at 1.3x is a question for a native speaker with the actual voice, not
-    # something to infer from a queue depth.
-    "ar": DriftPolicy(comfortable_s=0.4, speedup_at_s=1.0, skip_at_s=6.0, language="ar"),
+    # max_speed IS raised here, to 1.6, and the reason it was withheld before
+    # has been settled rather than overruled: the samples were rendered at 1.0,
+    # 1.3, 1.6 and 2.0 with this exact voice and judged by ear. 1.6 was chosen.
+    # It was never a question a queue depth could answer.
+    #
+    # Why it needs raising at all. Piper ships exactly two Arabic voices and
+    # they are the same speaker, so there is no faster one to switch to:
+    #
+    #   fr_FR-siwis-medium    4.17s    5.6s per 100 chars
+    #   ar_JO-kareem-medium   7.57s   14.3s per 100 chars
+    #   ar_JO-kareem-low      7.33s   13.8s per 100 chars   (and 16kHz, which
+    #                                  the shared track rate rejects anyway)
+    #
+    # Arabic needs 1.8x the audio French does for the same content, so at the
+    # old 1.3 ceiling it could not keep up by construction and the controller
+    # fell through to skipping. Measured on the same sentence:
+    #
+    #   1.3x   6.16s      still behind
+    #   1.6x   5.21x      close
+    #   2.0x   4.47s      matches French
+    #
+    # 1.6 does not fully close the gap - 2.0 would - so expect Arabic to drift
+    # slowly and skip occasionally on a long talk. That is the trade a listener
+    # picked over speech that stops sounding like speech, and it is the right
+    # way round: skipping is visible in the logs, unintelligible audio is not.
+    "ar": DriftPolicy(
+        comfortable_s=0.4, speedup_at_s=1.0, skip_at_s=6.0, max_speed=1.6, language="ar"
+    ),
 }
 """
 Per-language overrides, and only where there are measurements.

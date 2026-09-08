@@ -234,3 +234,24 @@ def test_measured_table_entries_are_valid_policies():
     for code, policy in LANGUAGE_POLICIES.items():
         assert policy.language == code, f"{code} entry is labelled {policy.language!r}"
         assert policy.comfortable_s < policy.speedup_at_s < policy.skip_at_s
+
+
+def test_arabic_speeds_up_harder_than_the_default():
+    """
+    Arabic needs 1.8x the audio French does for the same content, and Piper
+    ships no faster Arabic voice - the two it has are the same speaker. So the
+    ceiling is the only lever, and at the default 1.3 the controller cannot
+    keep up by construction and falls through to skipping phrases.
+
+    1.6 was chosen by listening to this exact voice at 1.0, 1.3, 1.6 and 2.0.
+    Pinned here because it is a judgement about speech, not a tuning constant:
+    anyone lowering it back to the default should have to listen first.
+    """
+    from lad_translate.session.drift import DEFAULT_POLICY, LANGUAGE_POLICIES
+
+    arabic = LANGUAGE_POLICIES["ar"]
+    assert arabic.max_speed == 1.6
+    assert arabic.max_speed > DEFAULT_POLICY.max_speed
+    # Ramp room: the speed-up has to start early enough to reach the ceiling
+    # gradually rather than jumping, which is far more audible than the speed.
+    assert arabic.speedup_at_s < DEFAULT_POLICY.speedup_at_s
