@@ -11,22 +11,21 @@
 # TCP 7881 on the VM's external IP; proxying it would be pointless and slow.
 
 {$LAD_TRANSLATE_SFU_HOST} {
-	# The operator console. It can restart sessions and rewrite settings, so it
-	# is behind basic auth and bound to localhost on the app side - unlike the
-	# join service, which is deliberately unauthenticated because a listener
-	# scans a QR code and has no credentials.
+	# The operator console, IF it has a password. bootstrap.sh writes
+	# conf.d/console.conf only when the secret exists, and a glob that matches
+	# nothing is not an error.
 	#
-	# Ordered before the catch-all: Caddy matches the most specific route, but
-	# writing it first keeps the intent obvious to anyone editing this.
-	handle /console* {
-		basic_auth {
-			operator {$LAD_TRANSLATE_CONSOLE_HASH}
-		}
-		uri strip_prefix /console
-		reverse_proxy localhost:8090
-	}
+	# It used to be inline here with basic_auth referencing an environment
+	# variable. With no secret that expanded to nothing, Caddy refused the whole
+	# config - "username and password cannot be empty or missing" - and failed
+	# to start. That takes TLS down for the SFU, so a missing OPTIONAL console
+	# password made every listener unreachable. An optional feature must not be
+	# able to break the required one.
+	import /etc/caddy/conf.d/*.conf
 
-	# Everything else is LiveKit's signalling connection.
+	# LiveKit's signalling connection. Last, so a more specific handle in
+	# conf.d wins; Caddy matches on specificity rather than order, but keeping
+	# this at the bottom matches how it reads.
 	handle {
 		reverse_proxy localhost:7880
 	}
