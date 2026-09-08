@@ -7,7 +7,10 @@ LOG_LEVEL: INFO
 # Control plane schema: holds the tenants table the join service scans to find
 # which tenant owns a session. There is deliberately no default in the code
 # (db/pool.py:35) - an unresolved schema must fail rather than quietly share.
-LAD_CONTROL_SCHEMA: lad_dev
+# lad-translate's OWN control schema, NOT Mr LAD's lad_dev. That table is
+# the platform's: 20 live tenants, and no schema_name or is_active column,
+# so every tenant lookup here died with UndefinedColumnError against it.
+LAD_CONTROL_SCHEMA: lad_translate_dev
 
 # What BROWSERS dial. Must be wss://, because the join page is served over
 # https and a secure page cannot open an insecure WebSocket.

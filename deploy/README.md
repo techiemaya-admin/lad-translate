@@ -142,6 +142,42 @@ Being unreachable presents badly: an unauthorised request to a private Cloud
 Run service returns a Google HTML 404, not a 403, so it reads like a missing
 route on a service that is running perfectly.
 
+### 1c. Control schema and the first tenant
+
+lad-translate uses **`lad_translate_dev`**, not Mr LAD's `lad_dev`.
+
+That is not a preference. `lad_dev.tenants` is the platform's table — 20 live
+tenants — and its columns are `id, name, slug, status, plan_tier, email, phone,
+website, metadata, created_at, updated_at, deleted_at, onboarding_state,
+vertical`. There is no `schema_name` and no `is_active`, which is what this
+project's tenant lookup selects, so every session died with:
+
+    asyncpg.exceptions.UndefinedColumnError: column "schema_name" does not exist
+
+and the join API returned HTTP 500 on `/api/sessions/{id}` for the same reason.
+`000_control_plane.sql` cannot be applied over it either: the table exists, with
+rows, in a different shape.
+
+The models also differ, not just the columns. lad-translate maps a tenant to a
+**schema**; the platform maps one to a **database URL**, in
+`lad_dev.tenant_database_config`. Reconciling those is a real piece of work, so
+this keeps its own directory for now.
+
+```bash
+LAD_DATABASE_URL=... LAD_CONTROL_SCHEMA=lad_translate_dev \
+  python tools/seed_tenant.py --slug techiemaya \
+    --id 90ddc419-a0e0-44e2-86b7-d91346a72b2a
+```
+
+`--id` pins the uuid to the platform's own row for this tenant. Two directories
+describing the same tenant should at least agree on its identifier, or every
+later cross-reference becomes a join on slug.
+
+**The cost of this choice, stated plainly:** the tenant list is a copy. A tenant
+added in Mr LAD does not appear here until someone seeds it. That is fine while
+this is one venue and one tenant, and it is the first thing to revisit when it
+is not.
+
 ### 2. Artifact Registry
 
 Already created in `lad-develop` on 7 Sep 2026. To recreate:
@@ -348,11 +384,10 @@ Real, and not fixed by the scaffolding here.
   Chatterbox are marked "written, unrun" in the README. What this VM deploys is
   faster-whisper on CUDA — a real speedup over the dev Mac, but not the
   streaming transducer the latency argument depends on.
-- **`serve_session.py` hardcodes the tenant.** Line 66 reads
-  `FROM lad_dev.tenants WHERE slug='techiemaya'`, ignoring
-  `LAD_CONTROL_SCHEMA`. That is exactly the pattern the repo's own Constraints
-  section forbids, and it means this VM serves one tenant. Fine for develop,
-  blocking for anything else.
+- **The tenant directory is a copy.** lad-translate keeps its own control
+  schema (see above), so a tenant added in Mr LAD does not exist here until
+  someone runs `seed_tenant.py`. Reconciling the two models — schema-per-tenant
+  here, database-URL-per-tenant in `tenant_database_config` — is the real fix.
 - **The core Postgres is on DigitalOcean, and the worker now sits further from
   it.** `165.22.221.77` is a DigitalOcean address (`DIGITALOCEAN-165-22-0-0`),
   not a GCP one, and `session/pipeline.py:323` awaits `record_transcript` inside
