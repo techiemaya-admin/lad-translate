@@ -354,7 +354,12 @@ together, and the page says that where someone changing one will read it.
 
 **Privileges.** It runs as `ladtranslate` and reaches systemd through
 `/etc/sudoers.d/lad-translate-console`: three verbs, one unit pattern, nothing
-else. It serves a web page, so the blast radius of a bug in it should be a
+else. It also needs `systemd-journal` group membership to read the session
+unit's log — that is how the status panel gets chunks, drops and latency.
+Without it `journalctl` shows a system user only its own messages, and the
+panel comes back empty while the log is full: a console that looks broken and
+is only blind. Read access is a group rather than another sudoers entry,
+because reading logs should not share a door with restarting units. It serves a web page, so the blast radius of a bug in it should be a
 restarted translation session. Room names are validated before they become
 arguments (`console/sessions.py`), and `session.env` writes go through an
 allowlist — that file also holds the control schema and the LiveKit addresses,
