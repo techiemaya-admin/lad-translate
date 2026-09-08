@@ -187,7 +187,21 @@ def create_app(
         _store, session = await _load_room(room_name)
         return await _issue_speaker(session, _client_url(request))
 
+    # Two paths, one handler, and the duplication is load-bearing.
+    #
+    # Google's frontend reserves the exact string "/healthz" on *.run.app and
+    # answers it itself with an HTML 404 that never reaches this process. It is
+    # only that one path: /health, /livez, /readyz and even /healthz2 all
+    # arrive here normally. That failure is nasty to read, because the service
+    # is healthy, the container logs show a clean startup, and every other
+    # route including the static bundle serves fine - the deploy looks good and
+    # only the health check is dead.
+    #
+    # /healthz stays because it works everywhere the frontend is not in the
+    # way: the container's own HEALTHCHECK, a VM, a laptop. /health is what
+    # anything outside Cloud Run must probe.
     @app.get("/healthz")
+    @app.get("/health")
     async def healthz():
         return {"ok": True}
 

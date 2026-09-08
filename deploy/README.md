@@ -262,8 +262,17 @@ Per-event settings — languages, Whisper size, chunker pair — live in
 ## Verifying, rather than trusting a green deploy
 
 A Cloud Run deploy reports SUCCESS for a container that starts and then fails
-every request, so `cloudbuild-develop.yaml` curls `/healthz` on the new
+every request, so `cloudbuild-develop.yaml` curls `/health` on the new
 revision as its last step.
+
+**Not `/healthz`.** Google's frontend reserves that exact string on
+`*.run.app` and answers it itself with an HTML 404 that never reaches the
+container — only that one path, while `/health`, `/livez`, `/readyz` and even
+`/healthz2` pass through normally. It is an unpleasant failure to read: the
+service is healthy, the logs show a clean startup, every other route including
+the static bundle serves fine, and only the health check is dead. The app
+answers on both paths; anything probing from outside Cloud Run must use
+`/health`.
 
 The SFU has no equivalent, and the check that matters is not that the parts are
 up. `tools/e2e.py` drives one real session through every layer and asserts that
