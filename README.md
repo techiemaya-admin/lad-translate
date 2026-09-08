@@ -740,8 +740,21 @@ language. `adapters/mt_routing.py`.
 
 | Languages | Backend | Why |
 |---|---|---|
-| fr, de, es, ar, zh, … | Opus-MT | comparable quality, 15x faster |
-| hi, te, ta, ml, kn, bn, mr, ur | NLLB-200 | Opus-MT is unsafe here |
+| fr, de, es, zh, … | Opus-MT | comparable quality, and cheaper |
+| **ar**, hi, te, ta, ml, kn, bn, mr, ur | NLLB-200 | Opus-MT is unsafe here |
+
+Arabic moved to NLLB on 8 Sep 2026. Opus-MT rendered "that the world has seen"
+(23 characters) as 212 characters of Arabic — the word for "the afterlife"
+repeated about 25 times — and returned Quranic exegesis formatting on longer
+input. NLLB gives 0.6–0.7x of the source length, and correct text.
+
+It went unchecked because the original comparison ran on Indic languages, and
+Arabic looked safe by association. Whatever is added next gets its own
+measurement.
+
+The cost line above used to say "15x faster". On 16 cores NLLB costs 101–339ms
+per phrase against Opus-MT's 103–147ms. That 15x was measured on a two-core
+machine and had become folklore.
 
 "Unsafe" is not an overstatement. Measured on the same transcript:
 

@@ -16,12 +16,42 @@ MEASURED, same transcript through both, JFK excerpt:
              spoken output ran 45.0s against NLLB's 38.1s for the same source:
              seven extra seconds of an audience being read garbage.
 
+    Arabic   the same failure, found later and worse. On the develop VM,
+             en->ar through Opus-MT:
+
+                 "that the world has seen"          23ch -> 212ch  (9.2x)
+                 '« الذي قد العالم العالم العالم الآخرة الآخرة الآخرة ...'
+
+             That is the word for "the afterlife" repeated about 25 times.
+             Longer inputs did not blow up as far but came back as Quranic
+             exegesis - « » quotation marks, أي "meaning", القرآن - over
+             Sherlock Holmes. The model appears to be trained heavily on
+             religious text and falls back to it under uncertainty.
+
+             NLLB on the same three strings: 0.6x, 0.6x, 0.7x of the source
+             length, and correct.
+
 The failures cluster on SHORT input, and the phrase chunker produces short
 chunks by design. Opus-MT's family models fail precisely on the shape this
 architecture generates, which is why Telugu is not merely weaker but unsafe.
 
-So: Indic languages to NLLB, everything else to Opus-MT. Fast where fast is
-good enough, correct where it is not.
+Arabic went unchecked because the original comparison ran on Indic languages,
+and it was ordinary Latin-script-adjacent enough to look safe by association.
+It was not. Whatever is added next gets its own measurement.
+
+The blowup is also why an Arabic listener kept losing phrases. Ten times the
+text is ten times the speech, so the playout queue filled from one phrase and
+the drift controller skipped the next. Three fixes aimed at the playout layer -
+queue capacity, max_speed, base_speed - moved the measured drift from 11.43s to
+11.44s, because none of them touched the reason the audio was that long.
+
+COST. The fetch tool still warns that NLLB is "roughly 15x slower on CPU". On
+16 cores it is not: 101ms, 189ms and 339ms against Opus-MT's 103ms, 121ms and
+147ms for the same three strings. Slower, comfortably affordable, and nothing
+like 15x. That figure was measured on a two core machine and is now folklore.
+
+So: Indic languages AND Arabic to NLLB, everything else to Opus-MT. Fast where
+fast is good enough, correct where it is not.
 """
 
 from __future__ import annotations
@@ -38,6 +68,9 @@ NLLB = "nllb-200"
 
 DEFAULT_ROUTES: dict[str, str] = {
     # Measured failures. Both were bad enough to put in front of nobody.
+    # Arabic: Opus-MT returns degenerate repetition and Quranic exegesis on
+    # short input. See the module docstring for the measurement.
+    "ar": NLLB,
     "hi": NLLB,
     "te": NLLB,
     # Served by the same en-dra family model as Telugu. Not individually

@@ -37,10 +37,29 @@ def test_indic_languages_route_to_nllb(language):
     assert route_for(language) == NLLB
 
 
-@pytest.mark.parametrize("language", ["fr", "de", "es", "ar", "zh", "pt"])
+@pytest.mark.parametrize("language", ["fr", "de", "es", "zh", "pt"])
 def test_everything_else_routes_to_opus(language):
-    """Comparable quality at 15x the speed, so it wins where it is good."""
+    """Comparable quality and cheaper, so it wins where it is good."""
     assert route_for(language) == OPUS
+
+
+def test_arabic_routes_to_nllb():
+    """
+    Opus-MT en->ar is unsafe on short input, which is all this chunker makes.
+
+    Measured on the develop VM: "that the world has seen", 23 characters, came
+    back as 212 characters of Arabic - the word for "the afterlife" repeated
+    about 25 times. Longer inputs returned Quranic exegesis formatting over
+    Sherlock Holmes. NLLB gives 0.6-0.7x of the source length, and correct
+    text.
+
+    This is pinned separately from the Indic cases because it was found much
+    later and for a different reason: Arabic was never in the original
+    comparison and was assumed safe by association. The blowup also spent the
+    day looking like a playout bug, since ten times the text is ten times the
+    speech.
+    """
+    assert route_for("ar") == NLLB
 
 
 def test_an_unlisted_language_defaults_to_opus():

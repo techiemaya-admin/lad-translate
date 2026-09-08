@@ -140,9 +140,15 @@ class NllbMtAdapter(MtAdapter):
             },
         )
         if device != "cuda":
-            log.warning(
-                "NLLB on CPU is roughly 15x slower than Opus-MT and cannot meet "
-                "the latency budget; use it for quality comparison only"
+            # Measured on 16 cores: 101ms, 189ms and 339ms per phrase against
+            # Opus-MT's 103ms, 121ms and 147ms. Slower, comfortably affordable,
+            # and nothing like the 15x a two core machine suggested. This is
+            # the production backend for Arabic and the Indic languages, so a
+            # warning telling operators it is comparison-only was wrong twice
+            # over: about the cost, and about what it is for.
+            log.info(
+                "NLLB running on CPU",
+                extra={"note": "costs roughly 1-2x Opus-MT per phrase on 16 cores"},
             )
 
     # -------------------------------------------------------------------------
