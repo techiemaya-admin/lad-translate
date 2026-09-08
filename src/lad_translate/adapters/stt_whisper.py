@@ -246,6 +246,31 @@ class WhisperSttAdapter(SttAdapter):
 
             text = await self._transcribe_buffer()
             if not text and not quiet:
+                if overlong:
+                    # The window cap is a bound, not a suggestion.
+                    #
+                    # Two thresholds guard this audio and they do not meet:
+                    # _track_silence counts quiet below silence_rms (0.005),
+                    # _transcribe_buffer refuses to transcribe below speech_rms
+                    # (0.006). Between them sits a band that is not quiet enough
+                    # to finalise and too quiet to transcribe, and it lands here
+                    # on `continue` with the buffer intact - so max_window_s
+                    # stops being enforced and the buffer grows without bound.
+                    #
+                    # Every later pass then transcribes a longer window, the
+                    # room-to-STT queue backs up, and the backpressure guard
+                    # shreds live audio to catch up. Observed on the develop
+                    # box: a 7.11s buffer against a 6.0s cap, growing 10ms a
+                    # pass, 52 seconds of speech dropped, and a transcript of
+                    # disconnected fragments - on a 16 vCPU machine at load 3.8,
+                    # which is why it never looked like a capacity problem.
+                    #
+                    # A phone microphone in a quiet room sits in that band.
+                    #
+                    # Dropped rather than yielded: there is no text to emit, and
+                    # a final hypothesis carrying an empty string would commit
+                    # nothing while telling the chunker an utterance had ended.
+                    self._buffer = np.zeros(0, dtype=np.float32)
                 continue
 
             # Silence and the window cap both close the current utterance: its
