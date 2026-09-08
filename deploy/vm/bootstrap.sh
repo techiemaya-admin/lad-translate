@@ -19,7 +19,12 @@ set -euo pipefail
 
 REPO_DIR="/opt/lad-translate"
 REPO_URL="https://github.com/techiemaya-admin/lad-translate.git"
-BRANCH="${LAD_TRANSLATE_BRANCH:-main}"
+# develop, not main. This is the develop-environment VM, the Cloud Build
+# trigger fires on ^develop$, and main carries none of this - it is still at
+# the commit before any deployment work. Defaulting to main here would
+# `git reset --hard origin/main` over the checkout and install the wrong tree,
+# quietly, on a box that then looks provisioned.
+BRANCH="${LAD_TRANSLATE_BRANCH:-develop}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "==> $*"; }
