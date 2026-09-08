@@ -261,6 +261,12 @@ gcloud compute addresses create lad-translate-sfu-dev --region=me-central1
 
 ```bash
 gcloud compute ssh lad-translate-sfu-dev --zone=me-central1-a
+
+# git first. A stock Debian image does not ship it, and bootstrap.sh only
+# installs it AFTER this clone - so leaving this out fails with a bare
+# "sudo: git: command not found" before the script has run a line.
+sudo apt-get update && sudo apt-get install -y git
+
 sudo git clone --branch develop https://github.com/techiemaya-admin/lad-translate.git /opt/lad-translate
 sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com GCP_PROJECT=lad-develop \
      bash /opt/lad-translate/deploy/vm/bootstrap.sh
