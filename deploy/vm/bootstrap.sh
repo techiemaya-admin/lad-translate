@@ -129,6 +129,16 @@ sudo -u ladtranslate env PATH="/usr/local/bin:${PATH}" bash -c "
     # at all and the TypeError names neither Python nor the version, so the
     # streaming STT backend is simply unavailable on the system interpreter.
     # uv fetches a standalone 3.12 rather than touching the OS one.
+    # --allow-existing REUSES the interpreter a venv was built with, so on a
+    # box provisioned before this change it would quietly stay on 3.11 and the
+    # streaming backend would remain unavailable with no error anywhere. Check
+    # the version and rebuild when it is wrong.
+    want=3.12
+    have=\$(.venv/bin/python -c 'import sys;print(\"%d.%d\" % sys.version_info[:2])' 2>/dev/null || echo none)
+    if [ \"\$have\" != \"\$want\" ]; then
+        echo \"    venv is python \$have, rebuilding on \$want\"
+        rm -rf .venv
+    fi
     uv venv --python 3.12 --allow-existing
     uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,stt-streaming,livekit,db,api]'
 "
