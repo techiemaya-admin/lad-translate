@@ -185,6 +185,7 @@ curl -fsS "http://127.0.0.1:7880/" >/dev/null && log "SFU answering on 7880"
 log "STT benchmark (this warms the model cache too)"
 sudo -u ladtranslate "${REPO_DIR}/.venv/bin/python" \
     "${REPO_DIR}/deploy/vm/benchmark_stt.py" --model "${LAD_TRANSLATE_STT_MODEL:-small}" \
+    --threads "${LAD_TRANSLATE_STT_THREADS:-8}" \
     || log "WARNING: benchmark failed. Do not run an event until this passes."
 
 cat <<EOF

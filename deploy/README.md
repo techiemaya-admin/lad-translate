@@ -202,17 +202,37 @@ running revision actually carries your commit before believing it shipped.
 
 ### Create it
 
-`n2-standard-32` — 32 vCPU, 128GB, no GPU. Sized off the measurement above:
-STT is the only heavy stage and it is single-stream, so cores buy latency
-headroom rather than throughput, and MT and TTS fan out per language on the
-rest. Start here, then cut it down once a real event has produced numbers — an
-idle n2-standard-32 is the most expensive thing in this design.
+`n2-standard-16` — 16 vCPU, 64GB, no GPU, with STT pinned to **8 threads**.
+
+Sized off a measurement taken on the box rather than a guess. Same 6s window
+against the 3.0s emit budget, varying only the thread count:
+
+| threads | p50 | p95 | headroom |
+|---|---|---|---|
+| 32 | 2.52s | 2.81s | **1.07x** |
+| 16 | 0.62s | 0.68s | 4.44x |
+| **8** | **0.74s** | **0.80s** | **3.73x** |
+| 4 | 0.97s | 1.05s | 2.86x |
+| 2 | 1.54s | 1.62s | 1.85x |
+
+**More threads is worse, sharply.** Handing ctranslate2 all 32 cores is four
+times slower than handing it four, and lands one bad window from shedding
+audio. This inverts the obvious intuition, which is exactly what makes it
+dangerous: the instinct when a box looks slow is to make it bigger, and here
+that is the thing that breaks it.
+
+8 threads leaves the other half of the machine for the MT and TTS fan-out,
+LiveKit and Caddy. It is pinned in `session.env` rather than left to
+ctranslate2's default, because the default tracks core count — leave it at 0
+and a resize changes latency with nothing in the config moving.
+
+**Re-run `deploy/vm/benchmark_stt.py` after any resize.**
 
 ```bash
 gcloud compute instances create lad-translate-sfu-dev \
   --project=lad-develop \
   --zone=me-central1-a \
-  --machine-type=n2-standard-32 \
+  --machine-type=n2-standard-16 \
   --image-family=debian-12 \
   --image-project=debian-cloud \
   --boot-disk-size=100GB --boot-disk-type=pd-balanced \
@@ -222,7 +242,7 @@ gcloud compute instances create lad-translate-sfu-dev \
 
 No GPU quota to request and no accelerator stock to chase, which is most of why
 Doha is available today and Dammam is not. `CPUS` quota in `me-central1` is
-`limit=100 usage=0`, so this fits with room for a second instance.
+`limit=100 usage=0`, so this fits several times over.
 
 Give the VM's service account `roles/secretmanager.secretAccessor` —
 `bootstrap.sh` reads all three secrets at provision time.
