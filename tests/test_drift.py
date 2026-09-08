@@ -236,6 +236,56 @@ def test_measured_table_entries_are_valid_policies():
         assert policy.comfortable_s < policy.speedup_at_s < policy.skip_at_s
 
 
+def test_base_speed_applies_on_an_empty_queue():
+    """
+    The bug that made raising max_speed useless.
+
+    This controller is reactive: it reads the queue before synthesising, so on
+    an empty queue it used to choose 1.0 no matter what the ceiling was. One
+    Arabic phrase is long enough to cross the skip threshold in a single step
+    from an empty queue, so the ceiling was never reached - raising it from 1.3
+    to 1.6 moved the measured drift by 0.01s.
+    """
+    from lad_translate.session.drift import DriftController
+
+    c = DriftController(["ar", "fr"])
+    c.observe("ar", 0.0)
+    c.observe("fr", 0.0)
+
+    assert c.speed_for("ar") == 1.5, "a slower language must not wait to be behind"
+    assert c.speed_for("fr") == 1.0, "a language that keeps up must not be sped up"
+
+
+def test_the_ramp_runs_from_base_to_max():
+    """base at rest, max at the skip threshold, and monotonic in between."""
+    from lad_translate.session.drift import LANGUAGE_POLICIES, DriftController
+
+    policy = LANGUAGE_POLICIES["ar"]
+    c = DriftController(["ar"])
+
+    c.observe("ar", 0.0)
+    assert c.speed_for("ar") == pytest.approx(policy.base_speed)
+    c.observe("ar", policy.skip_at_s)
+    assert c.speed_for("ar") == pytest.approx(policy.max_speed)
+
+    seen = []
+    for depth in (0.0, 1.0, 2.0, 4.0, 6.0):
+        c.observe("ar", depth)
+        seen.append(c.speed_for("ar"))
+    assert seen == sorted(seen), "a deeper queue must never mean slower speech"
+
+
+def test_base_speed_above_max_is_rejected():
+    """
+    Inverted, the ramp would make the voice slow DOWN as the queue grew,
+    deepening exactly what it exists to fix. Cheaper to reject than to debug.
+    """
+    from lad_translate.session.drift import DriftPolicy
+
+    with pytest.raises(ValueError, match="base_speed cannot exceed max_speed"):
+        DriftPolicy(base_speed=1.8, max_speed=1.3)
+
+
 def test_arabic_speeds_up_harder_than_the_default():
     """
     Arabic needs 1.8x the audio French does for the same content, and Piper
@@ -251,6 +301,7 @@ def test_arabic_speeds_up_harder_than_the_default():
 
     arabic = LANGUAGE_POLICIES["ar"]
     assert arabic.max_speed == 1.6
+    assert arabic.base_speed == 1.5
     assert arabic.max_speed > DEFAULT_POLICY.max_speed
     # Ramp room: the speed-up has to start early enough to reach the ceiling
     # gradually rather than jumping, which is far more audible than the speed.
