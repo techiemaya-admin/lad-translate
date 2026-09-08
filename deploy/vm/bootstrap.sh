@@ -89,14 +89,27 @@ umask 022
 # -----------------------------------------------------------------------------
 log "Application"
 # -----------------------------------------------------------------------------
+# safe.directory, or the second run of this "idempotent" script dies.
+#
+# The first run clones as root and then chowns the tree to ladtranslate. Every
+# run after that has root operating on a repo owned by someone else, which git
+# refuses as "dubious ownership" - and under set -e that aborts bootstrap right
+# here, after the packages and the venv and before the units. The box is then
+# half-provisioned while the run looks like it merely stopped early.
+#
+# Set per-invocation rather than in root's global config: this grants an
+# exception for exactly this path, for exactly these commands.
+GIT="git -c safe.directory=${REPO_DIR}"
+
 if [[ ! -d "${REPO_DIR}/.git" ]]; then
     git clone --branch "${BRANCH}" "${REPO_URL}" "${REPO_DIR}"
 else
-    git -C "${REPO_DIR}" fetch --prune origin
-    git -C "${REPO_DIR}" checkout "${BRANCH}"
-    git -C "${REPO_DIR}" reset --hard "origin/${BRANCH}"
+    ${GIT} -C "${REPO_DIR}" fetch --prune origin
+    ${GIT} -C "${REPO_DIR}" checkout "${BRANCH}"
+    ${GIT} -C "${REPO_DIR}" reset --hard "origin/${BRANCH}"
 fi
 chown -R ladtranslate:ladtranslate "${REPO_DIR}"
+log "  at $(${GIT} -C "${REPO_DIR}" log --oneline -1)"
 
 command -v uv &>/dev/null || {
     curl -LsSf https://astral.sh/uv/0.12.5/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
