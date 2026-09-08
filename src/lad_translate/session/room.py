@@ -71,6 +71,31 @@ Publish buffer per language.
 
 Must exceed DriftPolicy.skip_at_s, or the source blocks before the drift
 controller can act and the whole fan-out stalls behind one slow language.
+
+That bound is necessary and NOT sufficient, which cost an Arabic listener three
+phrases. The drift controller gates on the queue depth BEFORE a phrase, and
+never on what the phrase itself will add - so the real requirement is
+
+    PLAYOUT_QUEUE_MS > skip_at_s + (longest single phrase)
+
+With skip_at_s at 6s there is 6s of headroom here, and one Arabic phrase can
+fill most of it. Two in a row overflow, and LiveKit answers an overflowing
+capture_frame with `InvalidState - failed to capture frame`, which reads like a
+transport fault rather than a queue that is simply full. `push` now waits for
+room instead of finding out this way.
+"""
+
+PUSH_WAIT_TIMEOUT_S = 5.0
+"""
+How long push() waits for playout room before giving up on a phrase.
+
+Waiting is safe here because the fan-out is a worker task per language: this
+blocks the language that is behind and nothing else. It is also the outcome the
+drift controller wants, since the next phrase then observes a full queue and
+skips deliberately rather than failing.
+
+Bounded rather than indefinite: if a track has stopped draining entirely, the
+session should shed and say so, not wedge one language for ever.
 """
 
 
@@ -290,6 +315,43 @@ class TranslationRoom:
         samples = len(pcm) // 2 // self.num_channels
         if samples == 0:
             return
+
+        # Ask whether it fits before pushing it. capture_frame on a full source
+        # raises InvalidState, which loses the phrase AND reports it as a
+        # transport error, so the real cause - a queue that is simply full -
+        # has to be inferred from a drift number logged seconds later.
+        frame_s = samples / sample_rate
+        capacity_s = PLAYOUT_QUEUE_MS / 1000.0
+        deadline = time.monotonic() + PUSH_WAIT_TIMEOUT_S
+        waited = False
+        while float(entry.source.queued_duration) + frame_s > capacity_s:
+            if time.monotonic() >= deadline:
+                # Dropped on purpose, and loudly. The alternative is an
+                # exception that kills the phrase anyway while naming the wrong
+                # cause.
+                log.error(
+                    "playout queue full, dropping audio",
+                    extra={
+                        "language": language,
+                        "frame_s": round(frame_s, 2),
+                        "queued_s": round(float(entry.source.queued_duration), 2),
+                        "capacity_s": capacity_s,
+                        "waited_s": PUSH_WAIT_TIMEOUT_S,
+                    },
+                )
+                return
+            waited = True
+            await asyncio.sleep(0.05)
+
+        if waited:
+            log.warning(
+                "waited for playout room before publishing",
+                extra={
+                    "language": language,
+                    "queued_s": round(float(entry.source.queued_duration), 2),
+                },
+            )
+
         await entry.source.capture_frame(
             rtc.AudioFrame(
                 data=pcm,
