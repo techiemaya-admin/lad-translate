@@ -1,13 +1,34 @@
 """
-NVIDIA cache-aware streaming FastConformer. THE PRODUCTION STT. NOT YET RUN.
+NVIDIA cache-aware streaming FastConformer. THE PRODUCTION STT. RUNS ON CPU.
 
-Written against NeMo's documented streaming API and verified line by line
-against the reference implementation in
-examples/asr/asr_cache_aware_streaming/speech_to_text_cache_aware_streaming_infer.py,
-but never executed: NeMo needs torch with CUDA, and the development machine is
-a two core Intel Mac. Treat the tensor path as unverified until it has run on
-the A4000. The frame arithmetic, which is where this kind of adapter usually
-goes wrong, is pure and IS tested here -- see ChunkSchedule.
+Executed for the first time on 8 Sep 2026, on the develop VM: n2-standard-16,
+no GPU, torch 2.14.0+cpu, NeMo 3.0.0, against fixtures/holmes.wav. The tensor
+path was correct on its first run, against a NeMo major version newer than the
+one it was written for.
+
+    lookahead   RTF    step p50   step p95   WER
+    0ms         0.42      98ms      324ms    2.7%
+    80ms        0.22      66ms      196ms    2.0%
+    480ms       0.07      40ms       79ms    2.7%
+    1040ms      0.04      48ms       51ms    2.0%
+
+Every one keeps up, and the fastest is 12x realtime. Whisper small scores 3.4%
+on the same fixture, so this is more accurate as well as very much cheaper.
+
+Read the WER column loosely: one 75 second fixture cannot separate 2.0 from
+2.7, and the ordering is not monotonic in lookahead, which is what noise looks
+like. The RTF and step columns are the real result.
+
+This module used to say there was "no useful CPU path". That was written on a
+two core Mac which could not run it at all, so it was a belief rather than a
+measurement, and it was wrong by an order of magnitude. It cost this project
+the assumption that streaming STT required a GPU.
+
+The frame arithmetic, which is where this kind of adapter usually goes wrong,
+is pure and IS tested here -- see ChunkSchedule.
+
+STILL UNVERIFIED: this ran on a file, not on a live phone over a network, and
+not yet through the session pipeline with translation and TTS alongside it.
 
 WHY THIS ONE MATTERS MORE THAN THE OTHERS
 
@@ -508,7 +529,7 @@ class FastConformerSttAdapter(SttAdapter):
         model: str = DEFAULT_MODEL,
         lookahead: str = DEFAULT_LOOKAHEAD,
         decoder: str = "rnnt",
-        device: str = "cuda",
+        device: str | None = None,
         language: str = "en",
         preprocess_block_s: float = 0.32,
     ) -> None:
@@ -524,6 +545,16 @@ class FastConformerSttAdapter(SttAdapter):
         self.lookahead = LOOKAHEADS[lookahead]
         self.lookahead_name = lookahead
         self.decoder = decoder
+        if device is None:
+            # Was hardcoded "cuda", which fails outright on a CPU box - and CPU
+            # turns out to be comfortable here, so defaulting to a GPU that may
+            # not exist buys nothing. Explicit still wins: pass device= to pin it.
+            import importlib.util as _iu
+            if _iu.find_spec("torch") is not None:
+                import torch as _torch
+                device = "cuda" if _torch.cuda.is_available() else "cpu"
+            else:
+                device = "cpu"
         self.device = device
         self.language = language
 
@@ -543,9 +574,11 @@ class FastConformerSttAdapter(SttAdapter):
         # costs nothing and turns a mid-event failure into a config error.
         if importlib.util.find_spec("nemo") is None:
             raise RuntimeError(
-                "nemo_toolkit is not installed. It needs torch, and this "
-                "backend needs a CUDA device to meet its latency budget; "
-                "there is no useful CPU path."
+                "nemo_toolkit is not installed. Install it with torch; a CPU "
+                "build is enough - measured at RTF 0.07 on 16 vCPU, see the "
+                "module docstring. Note NeMo needs Python >= 3.11.4: its "
+                "safe_extract passes filter= to TarFile.extract, so on Debian "
+                "12's 3.11.2 no .nemo file will load at all."
             )
 
         self._model: Any = None

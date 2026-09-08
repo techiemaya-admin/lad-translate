@@ -32,7 +32,7 @@ to a room yet.
 | Session pipeline (`session/pipeline.py`) | Done, 15 tests |
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
 | Browser join page | Done, 38 tests |
-| Streaming STT adapter (FastConformer) | Written, unrun; 35 tests on the frame arithmetic |
+| Streaming STT adapter (FastConformer) | **Run on CPU 8 Sep 2026, RTF 0.07, WER 2.7%**; 37 tests |
 
 ## Measured on the dev Mac
 
@@ -868,6 +868,48 @@ Making this optional per event would need a column on `translation_sessions`.
 It is always offered today, on the grounds that a live session by definition
 has a source track. An event that does not want its floor audio redistributed
 is a real case and is not handled.
+
+## FastConformer runs, and it does not need a GPU
+
+Executed for the first time on 8 Sep 2026, on the develop VM: `n2-standard-16`,
+no GPU, torch 2.14.0+cpu, NeMo 3.0.0, `fixtures/holmes.wav`. The tensor path was
+correct on its first run, against a NeMo major version newer than the one it was
+written for.
+
+| lookahead | RTF | step p50 | step p95 | WER |
+|---|---|---|---|---|
+| 0ms | 0.42 | 98ms | 324ms | 2.7% |
+| 80ms | 0.22 | 66ms | 196ms | 2.0% |
+| 480ms | 0.07 | 40ms | 79ms | 2.7% |
+| 1040ms | 0.04 | 48ms | 51ms | 2.0% |
+
+Every lookahead keeps up, the default is 12x realtime, and Whisper `small`
+scores 3.4% on the same fixture — so this is more accurate as well as far
+cheaper. Read the WER column loosely: one 75s fixture cannot separate 2.0 from
+2.7, and the ordering is not monotonic in lookahead, which is what noise looks
+like. RTF and the step columns are the real result.
+
+The adapter said "there is no useful CPU path". That was written on a two core
+Mac that could not run it at all, so it was a belief rather than a measurement,
+and it was wrong by an order of magnitude. It cost this project the assumption
+that streaming STT needed a GPU — the assumption behind every capacity
+conclusion in this file.
+
+**What this dissolves.** `emit_interval > window_s * RTF` is a Whisper
+constraint, not a fact about streaming STT. Cache-aware steps encode only new
+audio and carry left context in a cache tensor, so cost per step is constant no
+matter how long the speaker talks. The sliding-window shedding, the tuning of
+emit against window, the trade where halving the delay doubled the error rate —
+none of it applies to this backend.
+
+**Two prerequisites, both easy to trip over.** NeMo needs Python >= 3.11.4:
+`safe_extract` passes `filter=` to `TarFile.extract`, so on Debian 12's 3.11.2
+no `.nemo` file loads at all, with a `TypeError` that names neither Python nor
+the version. And "multi" in the model name means multiple **lookaheads**, not
+multilingual — this model is English only.
+
+**Still unverified.** This ran on a file, not a live phone over a network, and
+not yet through the session pipeline with translation and TTS alongside it.
 
 ## Two GPU backends, written but never run
 
