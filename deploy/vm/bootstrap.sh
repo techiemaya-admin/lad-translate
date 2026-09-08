@@ -190,6 +190,33 @@ if ! command -v caddy &>/dev/null; then
 fi
 
 install -m 0644 "${HERE}/Caddyfile" /etc/caddy/Caddyfile
+install -d -m 0755 /etc/caddy/conf.d
+
+# The console route exists only when it has a password to sit behind. Emitting
+# it with an empty hash is what took Caddy - and with it every listener's TLS -
+# down on the first deploy of this feature.
+if [[ -n "${CONSOLE_HASH}" ]]; then
+    cat > /etc/caddy/conf.d/console.conf <<EOF
+handle /console* {
+	basic_auth {
+		operator ${CONSOLE_HASH}
+	}
+	uri strip_prefix /console
+	reverse_proxy localhost:8090
+}
+EOF
+    log "  console exposed at /console"
+else
+    rm -f /etc/caddy/conf.d/console.conf
+    log "  console NOT exposed: no lad-translate-console-password secret"
+fi
+
+# Validate before restarting. A bad Caddyfile takes the SFU offline, and
+# finding that out from `systemctl restart` means it is already down.
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || {
+    log "ERROR: Caddyfile does not validate; leaving the running config alone"
+    exit 1
+}
 install -d /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
 [Service]
