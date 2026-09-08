@@ -61,17 +61,23 @@ steps:
       - |
         set -e
         BRANCH_LOWER=$(cat /workspace/branch_lower.txt)
-        # --allow-unauthenticated is the product: a listener scans a QR code
-        # and has no account and no credentials. The authorisation that matters
-        # is in the token this service mints - subscribe-only, hidden, single
-        # room (api/tokens.py) - not at the ingress.
+        # No --allow-unauthenticated here, deliberately. That flag makes gcloud
+        # call run.services.setIamPolicy, and roles/editor does not include it:
+        # editor can create and update a service but not grant access to it,
+        # which is Google preventing privilege escalation rather than an
+        # oversight. The build SA is an editor, so the flag can only ever warn
+        # and carry on, leaving a service nobody can reach.
+        #
+        # A Cloud Run service's IAM policy is a property of the SERVICE, not of
+        # a revision, so allUsers survives every later deploy. Bind it once by
+        # hand (see deploy/README.md) and verify it here.
         #
         # --min-instances 1 because the audience arrives in one burst when the
         # QR code goes up on screen. A cold start there is a hall of people
         # looking at a spinner.
         gcloud run deploy ${_API_SERVICE} \
           --image ${_API_IMAGE}:$COMMIT_SHA \
-          --region ${_REGION} --platform managed --allow-unauthenticated \
+          --region ${_REGION} --platform managed \
           --port 8080 --memory 512Mi --cpu 1 \
           --concurrency 80 --min-instances 1 --max-instances 10 \
           --timeout 60 --cpu-boost \
@@ -79,35 +85,29 @@ steps:
           --set-secrets ${_SM_ENV_VARS} \
           --update-labels environment=develop,branch=$${BRANCH_LOWER},commit-sha=$SHORT_SHA,managed-by=cloud-build
 
-  # Make the service public, and do it as its own retried step.
+  # Verify the service is public. Read-only: getIamPolicy IS in roles/editor,
+  # setIamPolicy is not, which is exactly why this checks rather than binds.
   #
-  # `gcloud run deploy --allow-unauthenticated` sets this binding immediately
-  # after creating the service, and on a first deploy into a region that races:
-  # it reported "Setting IAM policy failed" and left the service private while
-  # still declaring success. An unauthorised request to a private Cloud Run
-  # service returns a Google HTML 404, not a 403, so the symptom is a health
-  # check that looks like a missing route on a service that is running fine.
-  #
-  # Idempotent, so re-running a build costs nothing.
+  # Still a hard failure. A listener scans a QR code and has no credentials, so
+  # a private service is an empty hall, and an unauthorised request to a private
+  # Cloud Run service returns a Google HTML 404 rather than a 403 - which reads
+  # like a missing route on a service that is running perfectly.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         set -e
-        for attempt in 1 2 3 4 5; do
-          if gcloud run services add-iam-policy-binding ${_API_SERVICE} \
-               --region ${_REGION} --member=allUsers --role=roles/run.invoker \
-               >/dev/null 2>&1; then
-            echo "allUsers -> roles/run.invoker bound (attempt $$attempt)"
-            exit 0
-          fi
-          echo "IAM binding attempt $$attempt failed, retrying..."
-          sleep 5
-        done
-        echo "ERROR: could not make ${_API_SERVICE} public after 5 attempts." >&2
-        echo "A listener scans a QR code and has no credentials; a private" >&2
-        echo "service means an empty hall. Failing rather than shipping that." >&2
+        if gcloud run services get-iam-policy ${_API_SERVICE} --region ${_REGION} \
+             --format='value(bindings.members)' | grep -q allUsers; then
+          echo "allUsers holds roles/run.invoker"
+          exit 0
+        fi
+        echo "ERROR: ${_API_SERVICE} is not public." >&2
+        echo "The build service account is an editor and cannot grant this." >&2
+        echo "Run once, as a project owner:" >&2
+        echo "  gcloud run services add-iam-policy-binding ${_API_SERVICE} \\" >&2
+        echo "    --region ${_REGION} --member=allUsers --role=roles/run.invoker" >&2
         exit 1
 
   # Prove the deployed revision answers, rather than trusting a green deploy.
