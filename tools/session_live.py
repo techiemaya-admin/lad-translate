@@ -46,6 +46,7 @@ from lad_translate.config import (
     SessionLimits,
     TenantContext,
 )
+from lad_translate.db.pool import control_schema
 from lad_translate.db.sessions import SessionStore
 from lad_translate.obs.log import configure, get_logger
 from lad_translate.session.pipeline import TranslationSession
@@ -177,6 +178,7 @@ async def main() -> int:
     ap.add_argument("--audio", type=Path, default=ROOT / "fixtures" / "keynote.wav")
     ap.add_argument("--targets", default="fr")
     ap.add_argument("--model", default="tiny")
+    ap.add_argument("--tenant", default="techiemaya")
     ap.add_argument("--emit-interval", type=float, default=3.0,
                     help="must exceed window_s * RTF or the backlog grows without bound")
     ap.add_argument("--window", type=float, default=6.0)
@@ -223,7 +225,9 @@ async def main() -> int:
                 os.environ["LAD_DATABASE_URL"], min_size=1, max_size=3
             )
             row = await pool.fetchrow(
-                "SELECT id::text, schema_name FROM lad_dev.tenants WHERE slug='techiemaya'"
+                f"SELECT id::text, schema_name FROM {control_schema()}.tenants "
+                "WHERE slug = $1 AND is_active",
+                args.tenant,
             )
             tenant = TenantContext(
                 tenant_id=row[0], database_url=os.environ["LAD_DATABASE_URL"], schema=row[1]

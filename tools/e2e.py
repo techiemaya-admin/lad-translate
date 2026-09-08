@@ -45,6 +45,7 @@ from lad_translate.config import (
     SessionLimits,
     TenantContext,
 )
+from lad_translate.db.pool import control_schema
 from lad_translate.db.sessions import SessionStore
 from lad_translate.obs.log import configure
 from lad_translate.session.pipeline import TranslationSession
@@ -183,6 +184,7 @@ async def main() -> int:
     ap.add_argument("--audio", type=Path, default=ROOT / "fixtures" / "holmes.wav")
     ap.add_argument("--reference", type=Path, default=ROOT / "fixtures" / "holmes.txt")
     ap.add_argument("--model", default="tiny")
+    ap.add_argument("--tenant", default="techiemaya")
     ap.add_argument(
         "--targets", default="fr,te",
         help="fr,te exercises both translation backends but starves two cores; "
@@ -209,7 +211,9 @@ async def main() -> int:
 
     pool = await asyncpg.create_pool(db_url, min_size=1, max_size=4)
     row = await pool.fetchrow(
-        "SELECT id::text, schema_name FROM lad_dev.tenants WHERE slug='techiemaya'"
+        f"SELECT id::text, schema_name FROM {control_schema()}.tenants "
+        "WHERE slug = $1 AND is_active",
+        args.tenant,
     )
     if row is None:
         print("  FAIL  no tenant seeded; run tools/seed_tenant.py --slug techiemaya")
