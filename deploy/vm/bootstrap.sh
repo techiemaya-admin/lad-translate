@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Provision the LAD Live Translation GPU VM (develop).
+# Provision the LAD Live Translation VM (develop): SFU + session worker.
 #
-# Runs on a Deep Learning VM image, which already carries the NVIDIA driver and
-# CUDA. Installing those by hand on a stock Debian image is the single most
-# common way this box ends up half-built.
+# Runs on stock Debian 12, which ships Python 3.11 - the version this project
+# requires. No GPU and no CUDA: the SFU is pure media routing, and the worker's
+# STT keeps up on CPU at the window the chunker uses (see deploy/README.md).
 #
 #   sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com \
 #        GCP_PROJECT=lad-develop \
@@ -113,6 +113,10 @@ log "Models"
 # not a Cloud Run service: paying this on a cold start would blow the entire
 # two second latency budget before a word is transcribed.
 #
+# The STT model is pulled on first use by faster-whisper, not here. Warm it
+# during provisioning rather than during a keynote - the benchmark below does
+# exactly that as a side effect.
+#
 # The MT weights come from third-party CTranslate2 conversions on the Hub,
 # whose coverage is patchy and which can vanish. Fine for develop. Before a
 # venue, convert the official Helsinki-NLP models and serve them from our own
@@ -170,8 +174,13 @@ sleep 3
 systemctl is-active --quiet livekit-server || { journalctl -u livekit-server -n 40 --no-pager; exit 1; }
 curl -fsS "http://127.0.0.1:7880/" >/dev/null && log "SFU answering on 7880"
 
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader \
-    || log "WARNING: no GPU visible. --device cuda will fail; the L4 driver is not loaded."
+# The one number that decides whether this box can run an event. STT must
+# finish a 6s window inside the 3.0s emit interval or the backlog guard starts
+# shedding audio, which is heard as gaps rather than as an error.
+log "STT benchmark (this warms the model cache too)"
+sudo -u ladtranslate "${REPO_DIR}/.venv/bin/python" \
+    "${REPO_DIR}/deploy/vm/benchmark_stt.py" --model "${LAD_TRANSLATE_STT_MODEL:-small}" \
+    || log "WARNING: benchmark failed. Do not run an event until this passes."
 
 cat <<EOF
 
@@ -180,6 +189,7 @@ Provisioned.
   SFU        wss://${LAD_TRANSLATE_SFU_HOST}   (signalling, via Caddy)
   media      UDP 50000-60000 / TCP 7881 direct to this VM's external IP
   app        ${REPO_DIR}
+  STT        CPU. Re-run deploy/vm/benchmark_stt.py after any resize.
 
 Start a talk:
 

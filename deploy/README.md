@@ -30,7 +30,7 @@ components dial), because on the dev Mac they must differ.
           https  |  wss (signalling)              | wss (publish)
                  v                                v
    +---------------------------+        +------------------------+
-   |  Cloud Run                |        |   GPU VM (GCE, L4)     |
+   |  Cloud Run                |        |   VM (GCE, n2, CPU)    |
    |  lad-translate-dev        | -----> |                        |
    |  join page, tokens        |  wss   |   Caddy :443           |
    +---------------------------+        |     -> LiveKit :7880   |
@@ -43,48 +43,55 @@ components dial), because on the dev Mac they must differ.
 
 ## One-time setup in `lad-develop`
 
-Region `asia-south1` (Mumbai), matching VOAG — but not for that reason, and not
-by preference. The Gulf regions were tried first and both failed.
+Region **`me-central1`** (Doha) — ~10ms from Dubai, which is where this sells.
+
+An earlier revision put this in `asia-south1` because the GPU backends want an
+L4 and Doha has no GPUs. That reasoning was wrong: **the GPU was for code that
+has never run.** FastConformer, Qwen3-ASR and Chatterbox are all "written,
+unrun" in the README status table. What executes is faster-whisper + Opus-MT +
+Piper, and measured at the window the chunker actually uses — 6s window, 3.0s
+emit, so STT must finish 6s of audio in under 3s — CPU int8 keeps up:
+
+| Model | Threads | p50 | p95 | Budget |
+|---|---|---|---|---|
+| `tiny` | 8 | 0.26s | 0.45s | 3.0s |
+| `small` | 8 | 1.39s | 1.63s | 3.0s |
+
+Measured on an Apple M4, so read it as evidence that CPU is the right shape,
+not as the number for an `n2`. An n2 vCPU is slower per thread; the answer is
+more of them, which is why the VM is 32 vCPU. **Re-run
+`deploy/vm/benchmark_stt.py` on the VM itself before an event.**
+
+Note what the SFU needs, which is nothing: LiveKit is pure media routing, no
+inference. Only the session worker loads a model. Conflating the two is what
+sent this to Mumbai.
+
+The Gulf alternatives, for the record:
 
 | Region | Cloud Run | Compute | GPU | Verdict |
 |---|---|---|---|---|
-| `me-central1` (Doha) | yes | yes | **none, any zone** | Cannot host the VM |
-| `me-central2` (Dammam) | **blocked** | **blocked** | L4 in catalog | Region not enabled for this project |
-| `asia-south1` (Mumbai) | yes | yes | L4, all 3 zones | Verified working |
+| `me-central1` (Doha) | yes | yes | none | **chosen** — CPU is enough |
+| `me-central2` (Dammam) | blocked | blocked | L4 | region not enabled for this project |
+| `me-west1` (Tel Aviv) | yes | yes | T4, A100 | ~2,000km from Dubai, no better than Mumbai |
 
-Doha is closest to Dubai and has no GPUs at all: `accelerator-types list` for
-`me-central1` returns nothing, and there are no `g2` machine types there.
+Dammam returns `PERMISSION_DENIED ... Access to the region is unavailable.
+Please contact our sales team` — an allowlisted-region entitlement, not IAM and
+not `constraints/gcp.resourceLocations` (`allValues: ALLOW` here). Worth
+requesting in the background: if the streaming FastConformer work lands, an L4
+there is its natural home. Not worth waiting for now.
 
-Dammam has L4 in the catalog, which is why it looked right, and the project has
-no access to the region:
-
-    PERMISSION_DENIED: Permission denied on 'locations/me-central2'
-    Access to the region is unavailable. Please contact our sales team
-
-That is an allowlisted-region entitlement, not an IAM role and not
-`constraints/gcp.resourceLocations` (which is `allValues: ALLOW` here). It
-applies to Artifact Registry, Cloud Run **and** Compute, so no split across
-me-central1 and me-central2 rescues it either.
-
-**The catalog is not the entitlement.** `accelerator-types list` and
-`machine-types list` read a global catalog and will happily list hardware in a
-region the project cannot touch. Probe the region itself before choosing it:
+**The catalog is not the entitlement.** `machine-types list` and
+`accelerator-types list` read a global catalog and will list hardware in a
+region the project cannot touch — exactly how Dammam looked viable. Probe it:
 
 ```bash
 gcloud compute addresses create probe --region=<REGION> && \
   gcloud compute addresses delete probe --region=<REGION> --quiet
 ```
 
-Verified for `asia-south1` on 7 Sep 2026: L4 in all three zones,
-`g2-standard-8` present, `NVIDIA_L4_GPUS` quota `limit=1 usage=0` (one VM needs
-no quota request, a second does), Compute create probe passed, and the
-`lad-translate-dev` Artifact Registry repo exists.
-
-**Mumbai is ~1,900km from Dubai against Dammam's ~430km, and this is a latency
-product** — media crosses the SFU twice, so the difference is paid twice per
-phrase. If Dubai becomes the primary venue, request `me-central2` access from
-Google and move: it is `_REGION` and the registry host in
-`cloudbuild-develop.yaml`, plus the zone flags here. Nothing else changes.
+Verified in `lad-develop` on 8 Sep 2026: Artifact Registry create/delete,
+Cloud Run list and a Compute address probe all succeed in `me-central1`, and
+`CPUS` quota is `limit=100 usage=0`.
 
 ### 1. Secrets
 
@@ -113,7 +120,7 @@ Already created in `lad-develop` on 7 Sep 2026. To recreate:
 
 ```bash
 gcloud artifacts repositories create lad-translate-dev \
-  --repository-format=docker --location=asia-south1 \
+  --repository-format=docker --location=me-central1 \
   --description="LAD Live Translation, develop"
 ```
 
@@ -167,39 +174,27 @@ running revision actually carries your commit before believing it shipped.
 
 ### Create it
 
-`g2-standard-8` is one NVIDIA L4 (24GB), which is the "24GB box" the GPU
-backends were written against.
+`n2-standard-32` — 32 vCPU, 128GB, no GPU. Sized off the measurement above:
+STT is the only heavy stage and it is single-stream, so cores buy latency
+headroom rather than throughput, and MT and TTS fan out per language on the
+rest. Start here, then cut it down once a real event has produced numbers — an
+idle n2-standard-32 is the most expensive thing in this design.
 
 ```bash
 gcloud compute instances create lad-translate-sfu-dev \
   --project=lad-develop \
-  --zone=asia-south1-a \
-  --machine-type=g2-standard-8 \
-  --maintenance-policy=TERMINATE \
-  --image-family=common-cu124-debian-11 \
-  --image-project=deeplearning-platform-release \
-  --boot-disk-size=200GB --boot-disk-type=pd-balanced \
-  --metadata="install-nvidia-driver=True" \
+  --zone=me-central1-a \
+  --machine-type=n2-standard-32 \
+  --image-family=debian-12 \
+  --image-project=debian-cloud \
+  --boot-disk-size=100GB --boot-disk-type=pd-balanced \
   --scopes=https://www.googleapis.com/auth/cloud-platform \
   --tags=lad-translate-sfu
 ```
 
-Verified in `lad-develop` on 7 Sep 2026, rather than assumed:
-
-- L4 is in `me-central2-a` and `me-central2-c`. **Not `-b`** — putting the
-  instance there fails with no capacity, which reads like a stock problem and
-  is not one.
-- `g2-standard-8` exists in both.
-- `NVIDIA_L4_GPUS` quota is `limit=1, usage=0`, so one VM needs no quota
-  request. A second one does.
-
-Re-check before building, since stock moves:
-
-```bash
-gcloud compute accelerator-types list --filter="zone~'me-central2'"
-gcloud compute regions describe me-central2 --format=json \
-  | python3 -c "import json,sys; print([q for q in json.load(sys.stdin)['quotas'] if q['metric']=='NVIDIA_L4_GPUS'])"
-```
+No GPU quota to request and no accelerator stock to chase, which is most of why
+Doha is available today and Dammam is not. `CPUS` quota in `me-central1` is
+`limit=100 usage=0`, so this fits with room for a second instance.
 
 Give the VM's service account `roles/secretmanager.secretAccessor` —
 `bootstrap.sh` reads all three secrets at provision time.
@@ -231,13 +226,13 @@ that fails against a name that does not resolve yet.
 Reserve the IP as static, or the name breaks the next time the VM restarts:
 
 ```bash
-gcloud compute addresses create lad-translate-sfu-dev --region=asia-south1
+gcloud compute addresses create lad-translate-sfu-dev --region=me-central1
 ```
 
 ### Provision
 
 ```bash
-gcloud compute ssh lad-translate-sfu-dev --zone=asia-south1-a
+gcloud compute ssh lad-translate-sfu-dev --zone=me-central1-a
 sudo git clone https://github.com/techiemaya-admin/lad-translate.git /opt/lad-translate
 sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com GCP_PROJECT=lad-develop \
      bash /opt/lad-translate/deploy/vm/bootstrap.sh
