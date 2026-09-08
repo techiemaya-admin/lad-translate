@@ -331,6 +331,44 @@ sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com GCP_PROJECT=lad-develop
 Idempotent. Re-run it after a change to the units or the SFU config; it leaves
 an edited `/etc/lad-translate/session.env` alone.
 
+## The operator console
+
+`https://translate-sfu-dev.mrlads.com/console`, basic auth, user `operator`.
+
+Start and stop sessions, choose a preset, adjust raw settings, watch drops and
+latency, and print both QR codes. It replaces editing `session.env` by hand and
+running `systemctl restart` over SSH.
+
+**Why it lives here and not on Cloud Run.** The join service is deliberately
+`--allow-unauthenticated`, because a listener scans a QR code and has no
+credentials. A surface that restarts sessions and changes models cannot share
+that door. It also has to reach systemd, which is local to this box.
+
+**Presets carry their measurements, including the failures.** "Low latency"
+measured better than the default on the fixture and dropped 225 seconds of a
+live speaker's audio; "Streaming" is better than Whisper on every fixture axis
+and produces 24-second spans of text from room tone. Both are offered, both
+say so. Raw fields sit behind an "advanced" toggle rather than being removed,
+because the tuning work is not finished — but emit interval and window move
+together, and the page says that where someone changing one will read it.
+
+**Privileges.** It runs as `ladtranslate` and reaches systemd through
+`/etc/sudoers.d/lad-translate-console`: three verbs, one unit pattern, nothing
+else. It serves a web page, so the blast radius of a bug in it should be a
+restarted translation session. Room names are validated before they become
+arguments (`console/sessions.py`), and `session.env` writes go through an
+allowlist — that file also holds the control schema and the LiveKit addresses,
+and a console that can rewrite those can point a venue at the wrong SFU.
+
+One secret to create before the first bootstrap:
+
+```bash
+openssl rand -base64 24 | tr -d '\n' \
+  | gcloud secrets create lad-translate-console-password --data-file=-
+```
+
+Without it the console still runs on localhost, and Caddy will not expose it.
+
 ## Running a talk
 
 ```bash

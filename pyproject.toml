@@ -33,6 +33,9 @@ stt-streaming = ["nemo_toolkit[asr]>=2.0"]
 livekit = ["livekit-agents~=1.4", "livekit>=1.0"]
 db      = ["asyncpg>=0.30"]
 api     = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "pyjwt>=2.9"]
+# The operator console renders QR codes server-side, so the browser never
+# needs a QR library and the page works on a locked-down venue network.
+console = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "qrcode>=8.0", "pillow>=10.0"]
 
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8"]
 

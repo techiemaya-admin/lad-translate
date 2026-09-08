@@ -77,6 +77,18 @@ printf '%s: %s\n' "${LIVEKIT_KEY}" "${LIVEKIT_SECRET}" > /etc/livekit/keys.yaml
 chown livekit:livekit /etc/livekit/keys.yaml
 chmod 0400 /etc/livekit/keys.yaml
 
+# The console's basic-auth password. Caddy wants a bcrypt hash rather than the
+# password, and `caddy hash-password` produces one, so the plaintext never lands
+# on disk anywhere.
+CONSOLE_PASSWORD="$(sm lad-translate-console-password 2>/dev/null || true)"
+if [[ -n "${CONSOLE_PASSWORD}" ]]; then
+    CONSOLE_HASH="$(caddy hash-password --plaintext "${CONSOLE_PASSWORD}" 2>/dev/null || true)"
+else
+    log "  WARNING: no lad-translate-console-password secret; console will not be exposed"
+    CONSOLE_HASH=""
+fi
+unset CONSOLE_PASSWORD
+
 cat > /etc/lad-translate/secrets.env <<EOF
 LAD_DATABASE_URL=${DATABASE_URL}
 LIVEKIT_API_KEY=${LIVEKIT_KEY}
@@ -140,7 +152,7 @@ sudo -u ladtranslate env PATH="/usr/local/bin:${PATH}" bash -c "
         rm -rf .venv
     fi
     uv venv --python 3.12 --allow-existing
-    uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,stt-streaming,livekit,db,api]'
+    uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,stt-streaming,livekit,db,api,console]'
 "
 
 # -----------------------------------------------------------------------------
@@ -182,6 +194,7 @@ install -d /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
 [Service]
 Environment=LAD_TRANSLATE_SFU_HOST=${LAD_TRANSLATE_SFU_HOST}
+Environment=LAD_TRANSLATE_CONSOLE_HASH=${CONSOLE_HASH}
 EOF
 
 # -----------------------------------------------------------------------------
@@ -189,6 +202,21 @@ log "Units"
 # -----------------------------------------------------------------------------
 install -m 0644 "${HERE}/livekit-server.service"        /etc/systemd/system/
 install -m 0644 "${HERE}/lad-translate-session@.service" /etc/systemd/system/
+install -m 0644 "${HERE}/lad-translate-console.service"  /etc/systemd/system/
+
+# The console manages units through three verbs on one unit pattern rather than
+# running as root. It serves a web page; the blast radius of a bug in it should
+# be a restarted translation session and nothing else.
+install -m 0440 -o root -g root "${HERE}/lad-translate-console.sudoers" \
+    /etc/sudoers.d/lad-translate-console
+visudo -cf /etc/sudoers.d/lad-translate-console >/dev/null
+
+# The console writes session.env, so it has to own it. Everything in there is
+# operational config; the credentials live in secrets.env, which stays 0400.
+cat > /etc/lad-translate/console.env <<EOF
+LAD_TRANSLATE_PUBLIC_BASE=${LAD_TRANSLATE_PUBLIC_BASE:-https://lad-translate-dev-kunfx3bnvq-ww.a.run.app}
+EOF
+chown ladtranslate:ladtranslate /etc/lad-translate/console.env
 
 # Never clobber an edited session.env on a re-run: it carries the per-event
 # language list and the chunker pair, and losing those mid-setup is silent.
@@ -217,9 +245,10 @@ else
     done < <(grep -oE '^[A-Z_]+=' "${HERE}/session.env.example" | tr -d '=')
     log "  /etc/lad-translate/session.env kept, ${added} new key(s) appended"
 fi
+chown ladtranslate:ladtranslate /etc/lad-translate/session.env
 
 systemctl daemon-reload
-systemctl enable --now livekit-server caddy
+systemctl enable --now livekit-server caddy lad-translate-console
 systemctl restart caddy
 
 # -----------------------------------------------------------------------------
@@ -246,6 +275,7 @@ Provisioned.
   SFU        wss://${LAD_TRANSLATE_SFU_HOST}   (signalling, via Caddy)
   media      UDP 50000-60000 / TCP 7881 direct to this VM's external IP
   app        ${REPO_DIR}
+  console    https://${LAD_TRANSLATE_SFU_HOST}/console   (basic auth, user "operator")
   STT        CPU. Re-run deploy/vm/benchmark_stt.py after any resize.
 
 Start a talk:
