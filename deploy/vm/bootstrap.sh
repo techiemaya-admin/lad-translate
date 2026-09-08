@@ -160,11 +160,30 @@ install -m 0644 "${HERE}/lad-translate-session@.service" /etc/systemd/system/
 
 # Never clobber an edited session.env on a re-run: it carries the per-event
 # language list and the chunker pair, and losing those mid-setup is silent.
+#
+# But "leave it alone" is not enough either. A release that adds a setting - as
+# LAD_TRANSLATE_STT_THREADS did - installs a unit that references a variable
+# the live file has never heard of, and systemd expands it to nothing. The
+# service then starts with an empty flag value and dies in argparse, on a box
+# that provisioned without a single error.
+#
+# So: keep every existing value, and append only the keys that are missing.
 if [[ ! -f /etc/lad-translate/session.env ]]; then
     install -m 0644 "${HERE}/session.env.example" /etc/lad-translate/session.env
     sed -i "s|translate-sfu-dev.mrlads.com|${LAD_TRANSLATE_SFU_HOST}|" /etc/lad-translate/session.env
 else
-    log "  /etc/lad-translate/session.env exists, left alone"
+    added=0
+    while IFS= read -r key; do
+        if ! grep -q "^${key}=" /etc/lad-translate/session.env; then
+            line="$(grep "^${key}=" "${HERE}/session.env.example")"
+            line="${line//translate-sfu-dev.mrlads.com/${LAD_TRANSLATE_SFU_HOST}}"
+            printf '\n# added by bootstrap.sh: new setting in this release\n%s\n' "$line" \
+                >> /etc/lad-translate/session.env
+            log "  session.env: added ${key}"
+            added=$((added + 1))
+        fi
+    done < <(grep -oE '^[A-Z_]+=' "${HERE}/session.env.example" | tr -d '=')
+    log "  /etc/lad-translate/session.env kept, ${added} new key(s) appended"
 fi
 
 systemctl daemon-reload
