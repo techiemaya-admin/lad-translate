@@ -105,7 +105,7 @@ async def test_push_waits_rather_than_overflowing():
 
     # Fill to just under capacity, the way two long phrases would.
     await r.push("ar", pcm_of(11.0), 16000)
-    assert source.queued_duration == pytest.approx(11.0)
+    assert source.queued_duration == pytest.approx(11.0, abs=0.05)
 
     # 2s more does not fit in a 12s queue. Drain while push is waiting.
     async def drain_soon():
@@ -118,7 +118,10 @@ async def test_push_waits_rather_than_overflowing():
     finally:
         await drainer
 
-    assert source.captured_s == pytest.approx([11.0, 2.0]), "the phrase was lost"
+    # Assert on the total, not the frame list: audio is paced into the source
+    # in PUSH_FRAME_MS slices now, so the shape of the calls is an
+    # implementation detail and only the delivered seconds are the contract.
+    assert sum(source.captured_s) == pytest.approx(13.0, abs=0.05), "audio was lost"
     assert source.queued_duration <= room_mod.PLAYOUT_QUEUE_MS / 1000.0
 
 
@@ -133,10 +136,48 @@ async def test_push_drops_loudly_when_the_queue_never_drains(monkeypatch, caplog
     monkeypatch.setattr(room_mod, "PUSH_WAIT_TIMEOUT_S", 0.2)
     source = FakeSource()
     r = _room_with(source)
-    await r.push("ar", pcm_of(11.5), 16000)
+    await r.push("ar", pcm_of(11.95), 16000)
+    delivered_before = sum(source.captured_s)
 
     with caplog.at_level("ERROR"):
         await r.push("ar", pcm_of(2.0), 16000)   # never fits, never drains
 
-    assert source.captured_s == pytest.approx([11.5]), "should not have been captured"
-    assert any("playout queue full" in rec.message for rec in caplog.records)
+    assert sum(source.captured_s) == pytest.approx(delivered_before, abs=0.15), (
+        "a source that never drains should shed, not accumulate"
+    )
+    assert any("not draining" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_phrase_larger_than_the_whole_queue_still_plays():
+    """
+    The case the first fix got wrong.
+
+    Piper renders a whole sentence before releasing any of it, so a phrase
+    arrives as one blob - 25.86 seconds of Arabic in the run that found this.
+    Offered whole to a 12 second queue it can never fit, and the first version
+    of this fix waited five seconds against an EMPTY queue and then dropped it.
+    The give-away was the log line itself: queued_s 0.0, frame_s 25.86.
+
+    Slicing is what makes waiting meaningful. Nothing may be lost here.
+    """
+    source = FakeSource()
+    r = _room_with(source)
+
+    # Drain in real time, the way a playing track does.
+    async def drain():
+        while True:
+            await asyncio.sleep(0.01)
+            source.drain(0.5)
+
+    drainer = asyncio.create_task(drain())
+    try:
+        await r.push("ar", pcm_of(25.86), 16000)
+    finally:
+        drainer.cancel()
+
+    delivered = sum(source.captured_s)
+    assert delivered == pytest.approx(25.86, abs=0.05), (
+        f"only {delivered:.2f}s of a 25.86s phrase reached the track"
+    )
+    assert max(source.captured_s) <= room_mod.PLAYOUT_QUEUE_MS / 1000.0
