@@ -124,8 +124,13 @@ sudo -u ladtranslate env PATH="/usr/local/bin:${PATH}" bash -c "
     # there and this script is meant to be re-runnable. NOT --clear: that
     # deletes and rebuilds the environment, so a re-provision would reinstall
     # every wheel to reach the state it was already in.
-    uv venv --python 3.11 --allow-existing
-    uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,livekit,db,api]'
+    # 3.12, not Debian 12's stock 3.11.2. NeMo's safe_extract passes filter=
+    # to TarFile.extract, which landed in 3.11.4; on 3.11.2 no .nemo file loads
+    # at all and the TypeError names neither Python nor the version, so the
+    # streaming STT backend is simply unavailable on the system interpreter.
+    # uv fetches a standalone 3.12 rather than touching the OS one.
+    uv venv --python 3.12 --allow-existing
+    uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,stt-streaming,livekit,db,api]'
 "
 
 # -----------------------------------------------------------------------------
