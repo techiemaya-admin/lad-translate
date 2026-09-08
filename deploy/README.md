@@ -261,7 +261,7 @@ gcloud compute addresses create lad-translate-sfu-dev --region=me-central1
 
 ```bash
 gcloud compute ssh lad-translate-sfu-dev --zone=me-central1-a
-sudo git clone https://github.com/techiemaya-admin/lad-translate.git /opt/lad-translate
+sudo git clone --branch develop https://github.com/techiemaya-admin/lad-translate.git /opt/lad-translate
 sudo LAD_TRANSLATE_SFU_HOST=translate-sfu-dev.mrlads.com GCP_PROJECT=lad-develop \
      bash /opt/lad-translate/deploy/vm/bootstrap.sh
 ```
