@@ -201,7 +201,10 @@ handle /console* {
 	basic_auth {
 		operator ${CONSOLE_HASH}
 	}
-	uri strip_prefix /console
+	# No strip_prefix. The app owns /console and serves its own assets from
+	# /console/static, so the prefix has to survive the proxy. Stripping it is
+	# what made the page ask for /static/console.css, get a 401 from outside the
+	# protected route, and re-prompt for credentials on every asset.
 	reverse_proxy localhost:8090
 }
 EOF
