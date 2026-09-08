@@ -1023,8 +1023,47 @@ audience hears nothing, and only a subscriber that actually receives audio
 proves otherwise. The check asserts peak amplitude, not duration: an open track
 carrying silence has plenty of duration.
 
-**12 of 13 pass consistently.** The failure is transcript accuracy, and it is
-honest: this machine sheds audio, so words never reach the transcript.
+**12 of 13 pass consistently on this machine.** The failure is transcript
+accuracy, and it is honest: this machine sheds audio, so words never reach the
+transcript.
+
+### On the deployed VM: 14 of 14
+
+Run against the self-hosted SFU on the develop box in me-central1
+(`n2-standard-16`, CPU only, STT pinned to 8 threads), same `holmes.wav`
+fixture, targets `fr,ar` plus the English relay:
+
+| | whisper `tiny` | whisper `small` |
+|---|---|---|
+| checks | 14/14 | 14/14 |
+| audio shed | 0 of 8022 frames | 0 of 8035 frames |
+| WER | 20.1% | **9.4%** |
+| chunk latency p50 | 0.51s fr / 0.56s ar | 1.26s fr / 1.31s ar |
+| chunk latency p95 | 0.72s fr / 0.78s ar | 1.57s fr / 1.64s ar |
+| playout drift | fr 2.02s, ar 4.10s | fr 1.85s, **ar 4.32s** |
+
+Three real WebRTC subscribers each received ~80s of audio at full amplitude,
+and billing settled on both runs.
+
+Three things this actually shows, none of them "it works":
+
+**Shedding was the machine, not the design.** 37-54% on the dev Mac, zero here,
+same fixture and same code. The transcript accuracy check only becomes
+meaningful once words reach the transcript at all, which is why it had never
+passed before.
+
+**`small` is worth its latency.** It more than halves WER, 20.1% to 9.4%, for
+about 0.8s more per chunk, and p95 stays under the two second budget. `tiny`
+remains the right default on a laptop and the wrong one at a venue.
+
+**Arabic drift is the open problem.** 4.3s of playout drift against French's
+1.85s, on a box with 3.8x STT headroom and nothing shed - so it is not
+starvation, and a faster machine will not fix it. This is the per-language
+behaviour the drift thresholds section describes, and it is the thing to
+measure before an event rather than after.
+
+Latency here is still not product latency. Whisper is not a streaming model,
+and no amount of CPU changes that.
 
 ### Capacity numbers here are not reproducible
 
