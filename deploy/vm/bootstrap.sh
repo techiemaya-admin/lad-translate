@@ -120,7 +120,11 @@ command -v uv &>/dev/null || {
 sudo -u ladtranslate env PATH="/usr/local/bin:${PATH}" bash -c "
     set -e
     cd '${REPO_DIR}'
-    uv venv --python 3.11
+    # --allow-existing, because uv venv is a hard error when .venv is already
+    # there and this script is meant to be re-runnable. NOT --clear: that
+    # deletes and rebuilds the environment, so a re-provision would reinstall
+    # every wheel to reach the state it was already in.
+    uv venv --python 3.11 --allow-existing
     uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,livekit,db,api]'
 "
 
