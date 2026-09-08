@@ -98,6 +98,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reference", type=Path, default=ROOT / "fixtures" / "holmes.txt")
     ap.add_argument("--audio", type=Path, default=ROOT / "fixtures" / "holmes.wav")
+    ap.add_argument("--tenant", default="techiemaya")
     ap.add_argument("--models", default="tiny,base,small", help="batch models to score")
     ap.add_argument("--session", help="also score what a live session actually produced")
     ap.add_argument("--no-batch", action="store_true")
@@ -130,13 +131,17 @@ def main() -> int:
         async def live() -> None:
             import asyncpg
 
+            from lad_translate.db.pool import control_schema
+
             url = os.environ.get(
                 "LAD_DATABASE_URL", "postgresql://lad@127.0.0.1:55432/salesmaya_agent"
             )
             pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
             try:
                 schema = await pool.fetchval(
-                    "SELECT schema_name FROM lad_dev.tenants WHERE slug='techiemaya'"
+                    f"SELECT schema_name FROM {control_schema()}.tenants "
+                    "WHERE slug = $1 AND is_active",
+                    args.tenant,
                 )
                 rows = await pool.fetch(
                     f"""SELECT DISTINCT ON (chunk_id) chunk_id, source_text
