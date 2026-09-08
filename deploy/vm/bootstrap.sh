@@ -42,6 +42,16 @@ log "Users"
 # -----------------------------------------------------------------------------
 id -u livekit      &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin livekit
 id -u ladtranslate &>/dev/null || useradd --system --create-home --home-dir /var/lib/ladtranslate --shell /bin/bash ladtranslate
+
+# The console reads the session unit's journal to report chunks, drops and
+# latency. journalctl shows a system user its own messages and nothing else, so
+# without this it returned one line and every field on the status panel came
+# back empty while the log itself was full - a console that looked broken and
+# was only blind.
+#
+# Read-only, and deliberately a group rather than a sudoers entry: reading logs
+# should not go through the same door as restarting units.
+usermod -aG systemd-journal ladtranslate
 install -d -o livekit -g livekit /var/lib/livekit
 install -d -m 0755 /etc/livekit /etc/lad-translate
 
