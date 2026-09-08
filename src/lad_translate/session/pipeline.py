@@ -34,6 +34,16 @@ from .room import TranslationRoom
 
 log = get_logger(__name__)
 
+STREAM_STALL_S = 1.0
+"""
+Wall time minus audio time, above which the source is treated as having
+stopped rather than merely running slow.
+
+Frames are 10-20ms, so a whole second of divergence is not jitter. Set it much
+lower and ordinary scheduling noise would re-anchor constantly, hiding the real
+drift the clock is meant to expose.
+"""
+
 
 @dataclass(slots=True)
 class SessionOutcome:
@@ -269,6 +279,9 @@ class TranslationSession:
         speaker connected 199 seconds later, which reported latencies around
         90 seconds for audio that was in fact a few seconds behind.
         """
+        prev_t_audio: float | None = None
+        prev_t_wall: float | None = None
+
         async for frame in frames:
             if not self.recorder.clock.anchored:
                 self.recorder.clock.anchor(t_audio=frame.t_audio, t_wall=frame.t_wall)
@@ -279,6 +292,33 @@ class TranslationSession:
                         "t_audio": frame.t_audio,
                     },
                 )
+            elif prev_t_wall is not None and prev_t_audio is not None:
+                # Anchoring once is not enough, because t_audio counts RECEIVED
+                # audio while wall time counts everything. room.py accumulates
+                # it from the frames themselves, so a speaker who reconnects
+                # leaves the two apart by the length of the gap and every later
+                # reading is inflated by exactly that.
+                #
+                # Measured on a real phone: two reconnects, and every chunk
+                # afterwards reported about 20 seconds with a hard floor at
+                # 17.7s. Nothing came in under the floor, which is an added
+                # constant rather than a slow stage.
+                #
+                # The threshold is well above frame jitter - frames are 10-20ms
+                # - so this fires on a stalled stream and not on a slow one.
+                stalled_s = (frame.t_wall - prev_t_wall) - (frame.t_audio - prev_t_audio)
+                if stalled_s > STREAM_STALL_S:
+                    self.recorder.clock.reanchor(t_audio=frame.t_audio, t_wall=frame.t_wall)
+                    log.warning(
+                        "audio stream stalled; clock re-anchored",
+                        extra={
+                            "stalled_s": round(stalled_s, 1),
+                            "t_audio": round(frame.t_audio, 2),
+                            "note": "latency before this point excluded the gap",
+                        },
+                    )
+
+            prev_t_audio, prev_t_wall = frame.t_audio, frame.t_wall
             yield frame
 
     async def _dispatch(self, chunk: PhraseChunk) -> None:
