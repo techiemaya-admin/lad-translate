@@ -24,6 +24,7 @@ without bound.
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 
 import numpy as np
@@ -37,6 +38,85 @@ WINDOW = 512
 
 CONTEXT = 64
 """Samples of history Silero keeps between windows. Its own default."""
+
+
+class GateTimeline:
+    """
+    Maps a position in gated audio back to its position in the received stream.
+
+    The gate removes silence, so anything timestamped against what came out of
+    it is stamped in SPEECH seconds. Everything downstream counts RECEIVED
+    seconds: obs.latency.AudioClock is anchored on room frames, which arrive
+    whether or not anyone is talking. Hand one to the other and every removed
+    second is reported as a second of latency - and since the error only ever
+    accumulates, it grows for the length of the session.
+
+    Measured live on 9 Sep 2026, before this existed. Glass-to-glass across
+    five consecutive chunks:
+
+        30.0s -> 36.7s -> 67.6s -> 89.7s -> 120.7s
+
+    identical for fr, ar and de, while the machine sat at load 0.96 on 16
+    vCPUs and shed no audio at all. Idle CPU plus monotone growth plus nothing
+    dropped is an added constant that keeps growing, which is a clock rather
+    than a slow stage. The re-anchor guard in session.pipeline cannot see it:
+    that compares t_wall against t_audio on ROOM frames, and both of those
+    advance normally. The gate is downstream of it and invisible to it.
+
+    Held as breakpoints rather than a running total because the correction
+    belongs to a POSITION and not to the moment of asking. A phrase that ends
+    just before a pause must not be charged for that pause; a running total
+    read at emit time would charge it. Only pauses create breakpoints, so an
+    hour with forty of them costs forty entries.
+    """
+
+    __slots__ = ("_passed", "_suppressed")
+
+    def __init__(self) -> None:
+        self._passed: list[float] = []
+        """Speech-seconds elapsed when each pause began. Non-decreasing."""
+
+        self._suppressed: list[float] = []
+        """Cumulative seconds removed by the end of that pause."""
+
+    def hold(self, at_passed_s: float, seconds: float) -> None:
+        """Record that `seconds` were removed after `at_passed_s` of speech."""
+        if self._passed and self._passed[-1] == at_passed_s:
+            self._suppressed[-1] += seconds
+            return
+        running = self._suppressed[-1] if self._suppressed else 0.0
+        self._passed.append(at_passed_s)
+        self._suppressed.append(running + seconds)
+
+    def release(self, seconds: float) -> None:
+        """
+        Un-charge audio that was held back and then let through anyway.
+
+        The pre-roll is suppressed window by window and only flushed once the
+        gate opens, so without this every pause would over-report by up to the
+        pre-roll length - 200ms each, which over a talk is the same kind of
+        accumulating constant this class exists to remove.
+        """
+        if not self._suppressed:
+            return
+        floor = self._suppressed[-2] if len(self._suppressed) > 1 else 0.0
+        self._suppressed[-1] = max(floor, self._suppressed[-1] - seconds)
+
+    def received_time(self, speech_s: float) -> float:
+        """Seconds of gated audio -> seconds of received audio."""
+        # bisect_left, so a position sitting exactly on a breakpoint is NOT
+        # charged for the pause that starts there: a phrase ending where the
+        # speaker stopped arrived before the silence, not after it.
+        i = bisect.bisect_left(self._passed, speech_s)
+        return speech_s + (self._suppressed[i - 1] if i else 0.0)
+
+    @property
+    def suppressed_s(self) -> float:
+        return self._suppressed[-1] if self._suppressed else 0.0
+
+    def reset(self) -> None:
+        self._passed.clear()
+        self._suppressed.clear()
 
 
 @dataclass
@@ -102,6 +182,10 @@ class SpeechGate:
         self._quiet_windows = 0
         self.stats = GateStats()
 
+        self.timeline = GateTimeline()
+        """How to read the gate's output on the received clock. Callers that
+        timestamp anything MUST map through this - see GateTimeline."""
+
     def _load(self):
         if self._model is None:
             from faster_whisper.vad import get_vad_model
@@ -149,8 +233,14 @@ class SpeechGate:
                 if not self._open:
                     # Opening: flush the pre-roll so the word's attack survives.
                     if self._ring.size:
+                        held = self._ring.size / self.sample_rate
                         out.append(self._ring)
-                        self.stats.passed_s += self._ring.size / self.sample_rate
+                        self.stats.passed_s += held
+                        # It was counted as suppressed on the way in and is
+                        # being let through after all, so give it back to both
+                        # the clock and the stats rather than counting it twice.
+                        self.stats.suppressed_s -= held
+                        self.timeline.release(held)
                         self._ring = np.zeros(0, dtype=np.float32)
                     self._open = True
                 self._quiet_windows = 0
@@ -164,14 +254,41 @@ class SpeechGate:
                     self.stats.passed_s += WINDOW / self.sample_rate
                 else:
                     self._open = False
-                    self._remember(window)
-                    self.stats.suppressed_s += WINDOW / self.sample_rate
+                    self._suppress(window)
             else:
-                self._remember(window)
-                self.stats.suppressed_s += WINDOW / self.sample_rate
+                self._suppress(window)
 
         return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+
+    def _suppress(self, window: np.ndarray) -> None:
+        """
+        Hold one window back, and tell the timeline it happened.
+
+        Every path that drops audio goes through here. Recording the drop next
+        to the drop is the point: the original bug was that the gate removed
+        time and nothing downstream was told, and a second removal path that
+        forgot to update the clock would recreate it exactly.
+        """
+        self._remember(window)
+        seconds = WINDOW / self.sample_rate
+        self.stats.suppressed_s += seconds
+        self.timeline.hold(self.stats.passed_s, seconds)
 
     def _remember(self, window: np.ndarray) -> None:
         """Keep the most recent pre_roll samples, and no more."""
         self._ring = np.concatenate([self._ring, window])[-self.pre_roll :]
+
+    def reset(self) -> None:
+        """
+        Forget the stream so far.
+
+        transcribe() builds a fresh geometry and schedule for every stream, so
+        its audio positions restart at zero. A gate carried over from a
+        previous stream would map those against the old stream's pauses.
+        """
+        self._pending = np.zeros(0, dtype=np.float32)
+        self._ring = np.zeros(0, dtype=np.float32)
+        self._open = False
+        self._quiet_windows = 0
+        self.stats = GateStats()
+        self.timeline.reset()

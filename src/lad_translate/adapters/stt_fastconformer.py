@@ -734,6 +734,12 @@ class FastConformerSttAdapter(SttAdapter):
         if self._model is None or self._geometry is None:
             raise RuntimeError("use FastConformerSttAdapter as an async context manager")
 
+        if self._gate is not None:
+            # The schedule below starts counting audio at zero, so a gate still
+            # holding the previous stream's pauses would map new positions
+            # against old silence.
+            self._gate.reset()
+
         state = _StreamState(self._model)
         buffer = FeatureBuffer()
         schedule = ChunkSchedule(self._geometry)
@@ -785,6 +791,12 @@ class FastConformerSttAdapter(SttAdapter):
             last_plan = final_plan
         if text and last_plan is not None:
             yield self._hypothesis(text, last_plan, is_final=True)
+
+        if self._gate is not None:
+            # A gate that suppressed almost nothing was not protecting the
+            # encoder; one that suppressed almost everything was eating the
+            # talk. Neither is visible from the transcript alone.
+            log.info("speech gate summary", extra=self._gate.stats.as_dict())
 
     def _featurise(self, block: np.ndarray) -> Any:
         import torch
@@ -850,6 +862,12 @@ class FastConformerSttAdapter(SttAdapter):
         assert self._geometry is not None
         self._seq += 1
         audio_end = self._geometry.audio_time(plan.end)
+        if self._gate is not None:
+            # The geometry counts what reached the encoder; the rest of the
+            # system counts what arrived. Skipping this reports every second
+            # the gate removed as a second of latency, forever - see
+            # vad.GateTimeline for the session that proved it.
+            audio_end = self._gate.timeline.received_time(audio_end)
         return Hypothesis(
             text=text,
             is_final=is_final,
