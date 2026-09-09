@@ -129,3 +129,48 @@ def test_stats_account_for_every_window():
     total = gate.stats.passed_s + gate.stats.suppressed_s
     assert total == pytest.approx(gate.stats.windows * WINDOW / SR, rel=0.05)
     assert 0.0 < gate.stats.suppressed_fraction < 1.0
+
+
+def test_the_timeline_puts_gated_audio_back_on_the_received_clock():
+    """
+    The wiring, as opposed to the arithmetic.
+
+    tests/test_gate_timeline.py proves GateTimeline computes the right answer.
+    This proves the gate actually feeds it - that every path which drops a
+    window also moves the clock. A gate that suppressed correctly and told the
+    timeline nothing would pass every other test in this file.
+    """
+    gate = SpeechGate()
+    gate.feed(room_tone(6.0))
+    gate.feed(speech(4.0))
+
+    # Whatever reached the model, it sits ~6s into a 10s stream.
+    end_of_speech = gate.stats.passed_s
+    assert end_of_speech > 0.0
+    assert gate.timeline.received_time(end_of_speech) == pytest.approx(10.0, abs=0.3)
+
+
+def test_the_timeline_and_the_stats_agree_about_what_was_removed():
+    gate = SpeechGate()
+    gate.feed(speech(3.0))
+    gate.feed(room_tone(4.0))
+    gate.feed(speech(3.0))
+    # Both are adjusted when the pre-roll is flushed, so they must not drift
+    # apart: the stats are what an operator reads, the timeline is what the
+    # latency figures are computed from, and one being wrong is worse than
+    # both being wrong the same way.
+    assert gate.timeline.suppressed_s == pytest.approx(gate.stats.suppressed_s, abs=1e-6)
+
+
+def test_reset_makes_the_gate_reusable_for_a_second_stream():
+    gate = SpeechGate()
+    gate.feed(room_tone(20.0))
+    gate.feed(speech(2.0))
+    assert gate.timeline.suppressed_s > 15.0
+
+    gate.reset()
+    gate.feed(speech(2.0))
+    # A second stream starts its audio positions at zero. Carrying the first
+    # stream's twenty seconds of silence into it would put every chunk twenty
+    # seconds late.
+    assert gate.timeline.received_time(gate.stats.passed_s) == pytest.approx(2.0, abs=0.3)
