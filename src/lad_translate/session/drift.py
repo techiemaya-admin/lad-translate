@@ -168,6 +168,25 @@ honest; inventing thresholds for languages nobody has run would look like data
 and would not be. Add an entry after a real session, and record the peak queue
 depth and speed-up count that justified it.
 
+MEASURED AND DELIBERATELY ABSENT: German.
+
+A listener reported German arriving late, and German was the obvious suspect
+here - it was the newest language, it was the one being listened to, and its
+policy line says source="default" next to Arabic's source="measured". It was
+not the cause. tools/playout_ratio.py, both fixtures, 9 Sep 2026:
+
+    fr  fr_FR-siwis-medium       5.13 - 5.30 s per 100 chars
+    de  de_DE-thorsten-medium    5.15 - 5.42 s per 100 chars
+    ar  ar_JO-kareem-medium     12.10 - 13.15 s per 100 chars
+
+German tracks French to within a few percent and produces no more audio than
+the English it replaces, so it does not fill the queue and DEFAULT_POLICY fits
+it. Arabic is 2.4x both, which is why Arabic is the only entry below.
+
+Recorded rather than dropped, because "we checked and the answer was no" is
+worth exactly as much here as an entry would be, and costs the next person the
+same run otherwise. The real cause was a clock: see adapters/vad.GateTimeline.
+
 Likely candidates once measured: Hindi, Urdu and Malayalam all tend to run
 longer than English, and Chinese tends to run shorter.
 """
