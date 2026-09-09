@@ -186,12 +186,17 @@
   // --- QR -------------------------------------------------------------------
 
   function refreshQr() {
-    if (!room() || !publicBase) return;
-    var stamp = Date.now();   // defeat the cache when the room changes
-    el.qrSpeak.src = BASE + "/api/qr?kind=speak&room=" + encodeURIComponent(room()) + "&t=" + stamp;
-    el.qrListen.src = BASE + "/api/qr?kind=listen&room=" + encodeURIComponent(room()) + "&t=" + stamp;
-    el.urlSpeak.textContent = publicBase + "/room/" + room() + "/speak";
-    el.urlListen.textContent = publicBase + "/room/" + room();
+    if (!room()) return;
+    // One authenticated fetch, then data URIs. Pointing <img> at the API meant
+    // two more network requests carrying no-store, which the browser answered
+    // with a second sign-in dialog over an already-loaded page - a login that
+    // appeared not to stay logged in. A data URI is not a request.
+    api(BASE + "/api/qr.json?room=" + encodeURIComponent(room())).then(function (r) {
+      el.qrSpeak.src = r.images.speak;
+      el.qrListen.src = r.images.listen;
+      el.urlSpeak.textContent = r.urls.speak;
+      el.urlListen.textContent = r.urls.listen;
+    }).catch(function (err) { toast(err.message, true); });
   }
 
   // --- actions --------------------------------------------------------------
