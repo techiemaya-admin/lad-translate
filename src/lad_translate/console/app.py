@@ -12,6 +12,7 @@ Cloud Run.
 
 from __future__ import annotations
 
+import base64
 import io
 from pathlib import Path
 
@@ -152,6 +153,55 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
             raise HTTPException(500, str(exc)) from exc
         return {"stopped": True}
 
+    def _qr_png(url: str) -> bytes:
+        import qrcode
+
+        code = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=4,
+        )
+        code.add_data(url)
+        code.make(fit=True)
+        buf = io.BytesIO()
+        code.make_image(fill_color="black", back_color="white").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def _room_urls(room: str) -> dict[str, str]:
+        base = f"{app.state.public_base}/room/{room}"
+        return {"listen": base, "speak": f"{base}/speak"}
+
+    @app.get(f"{PREFIX}/api/qr.json")
+    async def qr_json(room: str):
+        """
+        Both codes as data URIs, in one authenticated fetch.
+
+        The page used to point two <img> tags at this API. The stylesheet and
+        script survive in the browser cache, so they are fetched once and never
+        challenged again - but these carry no-store and a cache-buster, so they
+        hit the network fresh every time and the browser put up a second sign-in
+        dialog over a page that had already loaded. It looked like a login that
+        would not stay logged in.
+
+        A data URI is not a request, so there is nothing left to challenge. It
+        also means the codes render on a venue network that blocks everything
+        except the page itself.
+        """
+        try:
+            sessions.validate_room(room)
+        except sessions.BadRoom as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        urls = _room_urls(room)
+        return {
+            "urls": urls,
+            "images": {
+                kind: "data:image/png;base64," + base64.b64encode(_qr_png(url)).decode()
+                for kind, url in urls.items()
+            },
+        }
+
     @app.get(f"{PREFIX}/api/qr")
     async def qr(room: str, kind: str = "listen"):
         """
@@ -168,23 +218,9 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
         if kind not in ("listen", "speak"):
             raise HTTPException(400, "kind must be listen or speak")
 
-        import qrcode
-
-        suffix = "/speak" if kind == "speak" else ""
-        url = f"{app.state.public_base}/room/{room}{suffix}"
-
-        code = qrcode.QRCode(
-            version=None,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=10,
-            border=4,
-        )
-        code.add_data(url)
-        code.make(fit=True)
-        buf = io.BytesIO()
-        code.make_image(fill_color="black", back_color="white").save(buf, format="PNG")
+        url = _room_urls(room)[kind]
         return Response(
-            content=buf.getvalue(),
+            content=_qr_png(url),
             media_type="image/png",
             headers={"X-Encoded-Url": url, "Cache-Control": "no-store"},
         )

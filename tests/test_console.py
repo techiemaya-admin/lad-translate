@@ -205,3 +205,38 @@ def test_the_script_calls_the_api_under_the_prefix(client: TestClient):
     script = client.get("/console/static/console.js").text
     assert 'BASE = "/console"' in script
     assert 'fetch("/api/' not in script
+
+
+def test_qr_json_returns_both_codes_inline(client: TestClient):
+    """
+    One authenticated fetch, no separately-challenged subresources.
+
+    Pointing <img> at the PNG endpoint put a SECOND sign-in dialog over an
+    already-loaded page. The stylesheet and script survive in the browser cache
+    and are never re-challenged; the QR requests carried no-store and a
+    cache-buster, so they hit the network fresh every time. It looked like a
+    login that would not stay logged in.
+    """
+    r = client.get("/console/api/qr.json", params={"room": "dubai-demo"})
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["urls"]["listen"] == f"{PUBLIC}/room/dubai-demo"
+    assert body["urls"]["speak"] == f"{PUBLIC}/room/dubai-demo/speak"
+    for kind in ("listen", "speak"):
+        assert body["images"][kind].startswith("data:image/png;base64,")
+
+
+def test_the_page_makes_no_authenticated_image_requests(client: TestClient):
+    """The regression that produced the second dialog: an <img> at the API."""
+    script = client.get("/console/static/console.js").text
+    assert "/api/qr.json" in script
+    assert '.src = BASE + "/api/qr?' not in script
+
+
+def test_the_png_endpoint_still_works_for_printing(client: TestClient):
+    """Kept deliberately - tools and printing want a file, not a data URI."""
+    r = client.get("/console/api/qr", params={"room": "hall-a", "kind": "speak"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.headers["X-Encoded-Url"] == f"{PUBLIC}/room/hall-a/speak"
