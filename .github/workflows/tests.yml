@@ -52,7 +52,12 @@ jobs:
       - name: Run
         # Chunker, stability, clause detection, drift, backpressure, latency,
         # config, tenancy, tokens, routing table and the pipeline against fakes.
-        # 165 tests, no Postgres, no models, no GPU.
+        # No Postgres, no models, no GPU.
+        #
+        # test_vad.py is listed and will SKIP here: Silero ships inside
+        # faster-whisper, which this job does not install. It is listed rather
+        # than omitted so the skip shows up in the output - a test file left out
+        # of this list is a file nobody notices has stopped running.
         run: |
           .venv/bin/python -m pytest -q \
             tests/test_chunker.py tests/test_stability.py tests/test_clause.py \

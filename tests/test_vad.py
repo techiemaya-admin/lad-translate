@@ -17,6 +17,17 @@ import pytest
 
 from lad_translate.adapters.vad import WINDOW, SpeechGate
 
+# Silero ships inside faster-whisper, which CI deliberately does not install:
+# the model backends pull about a gigabyte of wheels. Same convention as the
+# other backend tests, and the same caveat - these prove nothing in CI, so run
+# them where the backend exists:
+#
+#     .venv/bin/python -m pytest tests/test_vad.py
+#
+# They are kept in the CI list anyway, so the skip is visible in the output
+# rather than the file silently never running.
+pytest.importorskip("faster_whisper", reason="needs the CPU STT backend installed")
+
 SR = 16000
 
 
