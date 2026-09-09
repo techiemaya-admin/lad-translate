@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from lad_translate.console import env, sessions
+from lad_translate.console import auth, env, sessions
 from lad_translate.console.app import create_app
 
 PUBLIC = "https://join.example.test"
@@ -37,9 +37,49 @@ def env_file(tmp_path: Path) -> Path:
     return path
 
 
+AUTH = auth.Config(
+    client_id="cid", client_secret="csecret",
+    redirect_uri="https://host/console/auth/callback",
+    session_secret="test-secret",
+    allowed_emails=frozenset(), allowed_domains=frozenset({"techiemaya.com"}),
+)
+
+
 @pytest.fixture
 def client(env_file: Path) -> TestClient:
-    return TestClient(create_app(public_base=PUBLIC, env_path=env_file))
+    """Signed in as a permitted operator, so these can test the console rather
+    than the gate. The gate has its own file."""
+    c = TestClient(create_app(public_base=PUBLIC, env_path=env_file, auth_config=AUTH))
+    c.cookies.set(auth.COOKIE, auth.issue_session("op@techiemaya.com", AUTH.session_secret))
+    return c
+
+
+@pytest.fixture
+def anonymous(env_file: Path) -> TestClient:
+    return TestClient(create_app(public_base=PUBLIC, env_path=env_file, auth_config=AUTH))
+
+
+def test_the_api_refuses_anyone_not_signed_in(anonymous: TestClient):
+    """The console can restart sessions. Signing in is not decoration."""
+    assert anonymous.get("/console/api/settings").status_code == 401
+    assert anonymous.post("/console/api/apply",
+                          json={"room": "hall-a", "preset": "live-safe"}).status_code == 401
+
+
+def test_a_browser_is_sent_to_google_rather_than_a_401(anonymous: TestClient):
+    """A navigation should start a sign-in; only fetches get a bare 401."""
+    r = anonymous.get("/console", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"].endswith("/auth/login")
+
+
+def test_static_assets_load_before_sign_in(anonymous: TestClient):
+    """
+    Otherwise the sign-in redirect arrives at a page that cannot style itself,
+    and the CSS 401s - which is the shape of failure this whole change exists
+    to end.
+    """
+    assert anonymous.get("/console/static/console.css").status_code == 200
 
 
 # --- writing settings -------------------------------------------------------

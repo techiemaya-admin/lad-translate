@@ -367,27 +367,55 @@ say so. Raw fields sit behind an "advanced" toggle rather than being removed,
 because the tuning work is not finished — but emit interval and window move
 together, and the page says that where someone changing one will read it.
 
+**Sign-in is Google, not a password.** Basic auth was tried and withdrawn: a
+32-byte base64 password with no trailing newline, copied out of a terminal where
+the shell prompt runs onto the end of it, into a dialog whose username field is
+easy to leave blank — and every one of those mistakes produced the same 401
+without saying which. It also re-challenged uncached subresources, so a second
+dialog appeared over an already-loaded page.
+
+Not IAP: IAP for a VM needs an HTTPS load balancer, and this box serves WebRTC
+media over raw UDP, which such a balancer does not carry. It would mean a second
+hostname and address for the console alone.
+
+The console verifies the ID token itself and admits an allowlist. It **fails
+closed** — an empty allowlist admits nobody, and missing OAuth config makes the
+console answer 503 rather than serving unprotected.
+
+**One-time setup.** Create an OAuth 2.0 Client ID (Web application) at
+<https://console.cloud.google.com/apis/credentials?project=lad-develop> with
+this authorised redirect URI, exactly:
+
+```
+https://translate-sfu-dev.mrlads.com/console/auth/callback
+```
+
+Then store all three:
+
+```bash
+printf '%s' 'YOUR_CLIENT_ID' \
+  | gcloud secrets create lad-translate-console-oauth-client-id --data-file=-
+printf '%s' 'YOUR_CLIENT_SECRET' \
+  | gcloud secrets create lad-translate-console-oauth-client-secret --data-file=-
+openssl rand -base64 32 | tr -d '\n' \
+  | gcloud secrets create lad-translate-console-session-secret --data-file=-
+```
+
+The session secret signs the login cookie; rotating it signs everyone out, which
+is the intended way to revoke access in a hurry.
+
+Who may sign in comes from `CONSOLE_ALLOWED_DOMAINS` (default `techiemaya.com`)
+and `CONSOLE_ALLOWED_EMAILS` in `/etc/lad-translate/console.env`.
+
 **Privileges.** It runs as `ladtranslate` and reaches systemd through
 `/etc/sudoers.d/lad-translate-console`: three verbs, one unit pattern, nothing
 else. It also needs `systemd-journal` group membership to read the session
 unit's log — that is how the status panel gets chunks, drops and latency.
-Without it `journalctl` shows a system user only its own messages, and the
-panel comes back empty while the log is full: a console that looks broken and
-is only blind. Read access is a group rather than another sudoers entry,
-because reading logs should not share a door with restarting units. It serves a web page, so the blast radius of a bug in it should be a
-restarted translation session. Room names are validated before they become
-arguments (`console/sessions.py`), and `session.env` writes go through an
-allowlist — that file also holds the control schema and the LiveKit addresses,
-and a console that can rewrite those can point a venue at the wrong SFU.
+Without it `journalctl` shows a system user only its own messages, and the panel
+comes back empty while the log is full: a console that looks broken and is only
+blind. Read access is a group rather than another sudoers entry, because reading
+logs should not share a door with restarting units.
 
-One secret to create before the first bootstrap:
-
-```bash
-openssl rand -base64 24 | tr -d '\n' \
-  | gcloud secrets create lad-translate-console-password --data-file=-
-```
-
-Without it the console still runs on localhost, and Caddy will not expose it.
 
 ## Running a talk
 

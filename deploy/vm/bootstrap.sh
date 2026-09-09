@@ -87,17 +87,15 @@ printf '%s: %s\n' "${LIVEKIT_KEY}" "${LIVEKIT_SECRET}" > /etc/livekit/keys.yaml
 chown livekit:livekit /etc/livekit/keys.yaml
 chmod 0400 /etc/livekit/keys.yaml
 
-# The console's basic-auth password. Caddy wants a bcrypt hash rather than the
-# password, and `caddy hash-password` produces one, so the plaintext never lands
-# on disk anywhere.
-CONSOLE_PASSWORD="$(sm lad-translate-console-password 2>/dev/null || true)"
-if [[ -n "${CONSOLE_PASSWORD}" ]]; then
-    CONSOLE_HASH="$(caddy hash-password --plaintext "${CONSOLE_PASSWORD}" 2>/dev/null || true)"
-else
-    log "  WARNING: no lad-translate-console-password secret; console will not be exposed"
-    CONSOLE_HASH=""
+# Google sign-in for the console. Three secrets, and the console refuses to
+# serve without them rather than serving unprotected - see console/auth.py.
+CONSOLE_CLIENT_ID="$(sm lad-translate-console-oauth-client-id 2>/dev/null || true)"
+CONSOLE_CLIENT_SECRET="$(sm lad-translate-console-oauth-client-secret 2>/dev/null || true)"
+CONSOLE_SESSION_SECRET="$(sm lad-translate-console-session-secret 2>/dev/null || true)"
+if [[ -z "${CONSOLE_CLIENT_ID}" || -z "${CONSOLE_CLIENT_SECRET}" ]]; then
+    log "  WARNING: no console OAuth secrets; the console will answer 503"
 fi
-unset CONSOLE_PASSWORD
+CONSOLE_HASH=""   # retained only so the route block below stays conditional
 
 cat > /etc/lad-translate/secrets.env <<EOF
 LAD_DATABASE_URL=${DATABASE_URL}
@@ -205,23 +203,22 @@ install -d -m 0755 /etc/caddy/conf.d
 # The console route exists only when it has a password to sit behind. Emitting
 # it with an empty hash is what took Caddy - and with it every listener's TLS -
 # down on the first deploy of this feature.
-if [[ -n "${CONSOLE_HASH}" ]]; then
+if [[ -n "${CONSOLE_CLIENT_ID}" ]]; then
     cat > /etc/caddy/conf.d/console.conf <<EOF
 handle /console* {
-	basic_auth {
-		operator ${CONSOLE_HASH}
-	}
-	# No strip_prefix. The app owns /console and serves its own assets from
-	# /console/static, so the prefix has to survive the proxy. Stripping it is
-	# what made the page ask for /static/console.css, get a 401 from outside the
-	# protected route, and re-prompt for credentials on every asset.
+	# No basic_auth. The console verifies Google identity itself, so there is
+	# no password to mistype, no username field to leave blank, and no browser
+	# dialog re-challenging uncached subresources. All of those happened.
+	#
+	# No strip_prefix either: the app owns /console and serves its own assets
+	# from /console/static, so the prefix has to survive the proxy.
 	reverse_proxy localhost:8090
 }
 EOF
     log "  console exposed at /console"
 else
     rm -f /etc/caddy/conf.d/console.conf
-    log "  console NOT exposed: no lad-translate-console-password secret"
+    log "  console NOT exposed: no lad-translate-console-oauth-client-id secret"
 fi
 
 # Validate before restarting. A bad Caddyfile takes the SFU offline, and
@@ -234,7 +231,6 @@ install -d /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
 [Service]
 Environment=LAD_TRANSLATE_SFU_HOST=${LAD_TRANSLATE_SFU_HOST}
-Environment=LAD_TRANSLATE_CONSOLE_HASH=${CONSOLE_HASH}
 EOF
 
 # -----------------------------------------------------------------------------
@@ -255,7 +251,16 @@ visudo -cf /etc/sudoers.d/lad-translate-console >/dev/null
 # operational config; the credentials live in secrets.env, which stays 0400.
 cat > /etc/lad-translate/console.env <<EOF
 LAD_TRANSLATE_PUBLIC_BASE=${LAD_TRANSLATE_PUBLIC_BASE:-https://lad-translate-dev-kunfx3bnvq-ww.a.run.app}
+CONSOLE_OAUTH_CLIENT_ID=${CONSOLE_CLIENT_ID}
+CONSOLE_OAUTH_CLIENT_SECRET=${CONSOLE_CLIENT_SECRET}
+CONSOLE_OAUTH_REDIRECT_URI=https://${LAD_TRANSLATE_SFU_HOST}/console/auth/callback
+CONSOLE_SESSION_SECRET=${CONSOLE_SESSION_SECRET}
+CONSOLE_ALLOWED_DOMAINS=${CONSOLE_ALLOWED_DOMAINS:-techiemaya.com}
+CONSOLE_ALLOWED_EMAILS=${CONSOLE_ALLOWED_EMAILS:-}
 EOF
+# Carries the OAuth client secret, so it is not world-readable like the rest of
+# the operational config.
+chmod 0400 /etc/lad-translate/console.env
 chown ladtranslate:ladtranslate /etc/lad-translate/console.env
 
 # Never clobber an edited session.env on a re-run: it carries the per-event
