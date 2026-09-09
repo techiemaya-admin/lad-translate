@@ -60,7 +60,7 @@ jobs:
             tests/test_registry.py tests/test_backpressure.py \
             tests/test_tokens.py tests/test_latency.py \
             tests/test_stt_whisper_buffer.py tests/test_playout_queue.py \
-            tests/test_console.py tests/test_console_auth.py \
+            tests/test_console.py tests/test_console_auth.py tests/test_vad.py \
             tests/test_gpu_backends.py tests/test_pipeline.py
 
   database:

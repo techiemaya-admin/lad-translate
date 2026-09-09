@@ -165,6 +165,17 @@ def test_the_dangerous_presets_carry_warnings(client: TestClient):
         assert by_key[key]["warning"], f"{key} must keep its warning"
 
 
+def test_the_streaming_preset_records_that_its_vad_is_unproven_live(client: TestClient):
+    """
+    The VAD fixes what made this preset unusable, and has itself only been
+    measured on fixtures - which is exactly the gap that has caught this project
+    out four times today. The preset must say so until a real talk has run.
+    """
+    by_key = {p["key"]: p for p in client.get("/console/api/presets").json()["presets"]}
+    warning = by_key["streaming"]["warning"].lower()
+    assert "not through a full talk" in warning or "fixtures, not" in warning
+
+
 def test_applying_a_preset_writes_its_values(client: TestClient, env_file: Path):
     r = client.post("/console/api/apply", json={"room": "hall-a", "preset": "accurate",
                                         "restart": False})

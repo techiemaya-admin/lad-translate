@@ -85,6 +85,7 @@ def build_stt_backend(args):
             "fastconformer",
             lookahead=args.lookahead,
             device=args.device if args.device != "cpu" else None,
+            vad=getattr(args, "vad", True),
         )
     return build_stt(
         "faster-whisper",
@@ -216,6 +217,10 @@ async def main() -> int:
                     choices=["faster-whisper", "fastconformer"])
     ap.add_argument("--lookahead", default="480ms",
                     help="fastconformer only: 0ms 80ms 480ms 1040ms")
+    # Default on. Off is what this adapter shipped as, and it made words out of
+    # room tone; --no-vad exists to measure against a clean file, not for a room.
+    ap.add_argument("--vad", dest="vad", action="store_true", default=True)
+    ap.add_argument("--no-vad", dest="vad", action="store_false")
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--emit-interval", type=float, default=3.0)
     ap.add_argument("--window", type=float, default=6.0)

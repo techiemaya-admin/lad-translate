@@ -32,7 +32,7 @@ to a room yet.
 | Session pipeline (`session/pipeline.py`) | Done, 15 tests |
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
 | Browser join page | Done, 38 tests |
-| Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7% on fixture). **NOT usable live: no VAD** |
+| Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
 ## Measured on the dev Mac
 
@@ -921,7 +921,7 @@ no `.nemo` file loads at all, with a `TypeError` that names neither Python nor
 the version. And "multi" in the model name means multiple **lookaheads**, not
 multilingual — this model is English only.
 
-**It has now run on a live phone, and it needs a VAD first.** The file numbers
+**It has now run on a live phone. It needed a VAD, and now has one.** The file numbers
 hold; a room does not. Over a phone it produced 24 and 48 second spans of text
 generated from near-silence between sentences — not mishearings. There is no
 silence handling in the module: `stt_whisper.py` has twenty-five references to
@@ -933,10 +933,16 @@ The delay a listener heard came from the same gap. The chunker commits at
 `max_words` or a clause boundary, noise-words accumulate slowly, and filling 25
 words took 24–49 seconds with nothing published until it did.
 
-The session default is back to `faster-whisper` until a real VAD gates frames
-before the encoder — `faster-whisper` already bundles Silero. That is the third
-measurement today that a clean fixture passed and live audio failed, after the
-`/healthz` check that stayed green while the API returned 500.
+`adapters/vad.py` now gates frames on Silero before the encoder. Measured over
+three seconds of each at 16kHz: speech 0.783 mean probability, silence 0.002,
+room tone 0.010, 50Hz hum 0.003 — the separation an amplitude threshold cannot
+make, which is why one was not used. It carries pre-roll so a word's attack is
+not clipped, and hangover so a pause inside a word does not split it.
+
+The gate itself has been measured on fixtures, not through a full talk on a
+phone, and that gap is precisely what caught this project out four times in one
+day. Select **Streaming** in the console to try it, and watch the transcript for
+the first minute rather than assuming.
 
 ## Two GPU backends, written but never run
 
