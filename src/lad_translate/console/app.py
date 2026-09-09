@@ -14,15 +14,19 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+import secrets
+import urllib.parse
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..obs.log import get_logger
-from . import env, sessions
+from . import auth, env, sessions
 from .presets import BY_KEY, PRESETS
 
 log = get_logger(__name__)
@@ -46,7 +50,11 @@ class ApplyRequest(BaseModel):
     restart: bool = True
 
 
-def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
+def create_app(
+    public_base: str,
+    env_path: Path | None = None,
+    auth_config: auth.Config | None = None,
+) -> FastAPI:
     """
     `public_base` is the URL a PHONE reaches the join service on - the Cloud Run
     address, not this box. The console runs on the SFU host; the QR codes it
@@ -68,6 +76,56 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
     # served at /console they resolve against /, served at /console/ against
     # /console/. Owning the prefix removes the class of bug rather than the
     # instance.
+    app.state.auth = auth_config or auth.config_from_env()
+
+    # Paths that must work before anyone is signed in. Everything else is gated.
+    # An allowlist, not a denylist: a new route is protected by default, which
+    # is the direction a mistake should fall.
+    OPEN = {
+        f"{PREFIX}/auth/login",
+        f"{PREFIX}/auth/callback",
+        f"{PREFIX}/auth/denied",
+        f"{PREFIX}/health",
+    }
+
+    class RequireGoogleSignIn(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            cfg: auth.Config = request.app.state.auth
+            path = request.url.path
+
+            if not cfg.enabled:
+                # No client configured means no console, not an open console.
+                # The Caddy incident earlier today came from treating missing
+                # config as permission to carry on; this fails the other way.
+                return Response(
+                    "The console is not configured for sign-in. See "
+                    "deploy/README.md.",
+                    status_code=503,
+                    media_type="text/plain",
+                )
+            if path in OPEN or path.startswith(f"{PREFIX}/static/"):
+                return await call_next(request)
+
+            email = auth.read_session(
+                request.cookies.get(auth.COOKIE), cfg.session_secret
+            )
+            if not email:
+                # An API call gets 401 so the page can say so; a navigation gets
+                # sent to Google. Redirecting a fetch would hand the caller
+                # Google's HTML and look like a parsing bug.
+                if path.startswith(f"{PREFIX}/api/"):
+                    return Response(
+                        json.dumps({"detail": "sign in required"}),
+                        status_code=401,
+                        media_type="application/json",
+                    )
+                return RedirectResponse(f"{PREFIX}/auth/login", status_code=302)
+
+            request.state.email = email
+            return await call_next(request)
+
+    app.add_middleware(RequireGoogleSignIn)
+
     app.mount(f"{PREFIX}/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get(f"{PREFIX}/health")
@@ -224,5 +282,69 @@ def create_app(public_base: str, env_path: Path | None = None) -> FastAPI:
             media_type="image/png",
             headers={"X-Encoded-Url": url, "Cache-Control": "no-store"},
         )
+
+    # --- sign in -------------------------------------------------------------
+
+    @app.get(f"{PREFIX}/auth/login")
+    async def login(request: Request):
+        cfg: auth.Config = request.app.state.auth
+        state, nonce = auth.new_state(), auth.new_state()
+        response = RedirectResponse(auth.authorize_url(cfg, state, nonce), status_code=302)
+        # state and nonce ride in short-lived cookies rather than server memory,
+        # so the console survives a restart mid-sign-in and needs no store.
+        for name, value in (("lad_oauth_state", state), ("lad_oauth_nonce", nonce)):
+            response.set_cookie(
+                name, value, max_age=600, httponly=True, secure=True, samesite="lax"
+            )
+        return response
+
+    @app.get(f"{PREFIX}/auth/callback")
+    async def callback(request: Request, code: str = "", state: str = ""):
+        cfg: auth.Config = request.app.state.auth
+        expected = request.cookies.get("lad_oauth_state")
+        nonce = request.cookies.get("lad_oauth_nonce")
+
+        # compare_digest, and both halves must exist: a missing cookie and a
+        # forged state should fail identically.
+        if not code or not expected or not secrets.compare_digest(state, expected):
+            return RedirectResponse(f"{PREFIX}/auth/denied?why=state", status_code=302)
+
+        try:
+            email = await auth.exchange_and_verify(cfg, code, nonce or "")
+        except auth.AuthError as exc:
+            return RedirectResponse(
+                f"{PREFIX}/auth/denied?why={urllib.parse.quote(str(exc))}", status_code=302
+            )
+
+        response = RedirectResponse(PREFIX, status_code=302)
+        response.set_cookie(
+            auth.COOKIE,
+            auth.issue_session(email, cfg.session_secret),
+            max_age=auth.SESSION_TTL_S,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+        )
+        for name in ("lad_oauth_state", "lad_oauth_nonce"):
+            response.delete_cookie(name)
+        return response
+
+    @app.get(f"{PREFIX}/auth/denied")
+    async def denied(why: str = "Sign-in failed."):
+        return Response(
+            f"{why}\n\nTry again: {PREFIX}/auth/login\n",
+            status_code=403,
+            media_type="text/plain",
+        )
+
+    @app.post(f"{PREFIX}/auth/logout")
+    async def logout():
+        response = RedirectResponse(f"{PREFIX}/auth/login", status_code=302)
+        response.delete_cookie(auth.COOKIE)
+        return response
+
+    @app.get(f"{PREFIX}/api/whoami")
+    async def whoami(request: Request):
+        return {"email": getattr(request.state, "email", None)}
 
     return app
