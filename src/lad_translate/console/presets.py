@@ -88,17 +88,19 @@ PRESETS: tuple[Preset, ...] = (
     ),
     Preset(
         key="streaming",
-        label="Streaming (not ready)",
-        summary="Sub-second on a file. Unusable in a room until it has a VAD.",
+        label="Streaming",
+        summary="Sub-second, and the fastest thing here. Now gated on speech.",
         measured=(
-            "FastConformer, 480ms lookahead. On the fixture: 2.7% WER, RTF "
-            "0.07, French latency p50 0.581s - better than whisper on every "
-            "axis."
+            "FastConformer, 480ms lookahead, Silero gating frames before the "
+            "encoder. On the fixture: 2.7% WER, RTF 0.07, French latency p50 "
+            "0.581s - better than whisper on every axis. Silero separates "
+            "speech at 0.783 mean probability from room tone at 0.010."
         ),
         warning=(
-            "No voice activity detection anywhere in the adapter, so room tone "
-            "becomes words: 24 and 48 second spans of text generated from "
-            "near-silence. Here to be measured, not to be used."
+            "The VAD is new and has been measured on fixtures, not through a "
+            "full talk on a phone. Without it this produced 24 and 48 second "
+            "spans of text invented from room tone, so watch the transcript "
+            "for the first minute rather than assuming."
         ),
         stt_backend="fastconformer",
         model="tiny",

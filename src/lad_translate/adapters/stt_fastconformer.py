@@ -27,7 +27,7 @@ the assumption that streaming STT required a GPU.
 The frame arithmetic, which is where this kind of adapter usually goes wrong,
 is pure and IS tested here -- see ChunkSchedule.
 
-RAN ON A LIVE PHONE, AND IT NEEDS A VAD BEFORE IT CAN BE USED THERE
+RAN ON A LIVE PHONE. IT NEEDED A VAD, AND NOW HAS ONE
 
 The file numbers hold. A room does not. Live, over a phone, this produced:
 
@@ -45,9 +45,16 @@ being slow. The chunker commits at max_words or a clause boundary, noise-words
 accumulate slowly, and filling 25 words took 24 to 49 seconds with nothing
 published until it did.
 
-The fix is a real VAD gating frames before the encoder - faster-whisper already
-bundles Silero - and not a threshold bolted on here. Until then the session
-default is faster-whisper. See deploy/vm/session.env.example.
+Fixed by gating frames on Silero before the encoder - see adapters/vad.py. It
+is on by default; vad=False remains for measuring against a clean file, where
+the gate can only cost time. Silero separates the two cases clearly, measured
+on three seconds of each:
+
+    speech 0.783 mean, silence 0.002, room tone 0.010, 50Hz hum 0.003
+
+A fixed RMS threshold would have been quicker and wrong: the band that matters
+is where a quiet talker and a noisy room overlap, and amplitude cannot separate
+them. stt_whisper.py already paid for that lesson once.
 
 WHY THIS ONE MATTERS MORE THAN THE OTHERS
 
@@ -551,6 +558,8 @@ class FastConformerSttAdapter(SttAdapter):
         device: str | None = None,
         language: str = "en",
         preprocess_block_s: float = 0.32,
+        vad: bool = True,
+        vad_threshold: float = 0.5,
     ) -> None:
         if lookahead not in LOOKAHEADS:
             raise KeyError(
@@ -598,6 +607,27 @@ class FastConformerSttAdapter(SttAdapter):
                 "module docstring. Note NeMo needs Python >= 3.11.4: its "
                 "safe_extract passes filter= to TarFile.extract, so on Debian "
                 "12's 3.11.2 no .nemo file will load at all."
+            )
+
+        self.vad = vad
+        """
+        Gate frames on speech before they reach the encoder.
+
+        On by default, because off is what this adapter shipped as and it made
+        words out of room tone - 24 and 48 second spans of invented text between
+        real sentences on a live phone. The fixture never showed it, so nothing
+        in the test suite objected.
+
+        Off is still reachable, for measuring against a clean file where the
+        gate can only cost time.
+        """
+
+        self._gate = None
+        if vad:
+            from .vad import SpeechGate
+
+            self._gate = SpeechGate(
+                sample_rate=SAMPLE_RATE_16K, threshold=vad_threshold
             )
 
         self._model: Any = None
@@ -666,6 +696,7 @@ class FastConformerSttAdapter(SttAdapter):
                 "device": self.device,
                 "step_interval_s": round(self._geometry.step_interval_s, 3),
                 "revises_hypotheses": self.revises_hypotheses,
+                "vad": self.vad,
                 "load_s": round(time.monotonic() - started, 2),
                 "torch_cuda": torch.cuda.is_available(),
             },
@@ -714,7 +745,16 @@ class FastConformerSttAdapter(SttAdapter):
         real audio position rather than a zero one."""
 
         async for frame in frames:
-            pending = np.concatenate([pending, resample_to_16k(frame.pcm, frame.sample_rate)])
+            incoming = resample_to_16k(frame.pcm, frame.sample_rate)
+            if self._gate is not None:
+                # Before the encoder, not after. A transducer carries its own
+                # context forward, so silence it has already encoded keeps
+                # shaping later tokens - filtering the transcript afterwards
+                # would not undo that.
+                incoming = self._gate.feed(incoming)
+                if incoming.size == 0:
+                    continue
+            pending = np.concatenate([pending, incoming])
             while pending.size >= samples_per_block:
                 block, pending = pending[:samples_per_block], pending[samples_per_block:]
                 buffer.append(await asyncio.to_thread(self._featurise, block))

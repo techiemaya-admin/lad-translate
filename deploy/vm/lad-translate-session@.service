@@ -34,6 +34,7 @@ ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
     --model ${LAD_TRANSLATE_STT_MODEL} \
     --stt ${STT_BACKEND} \
     --lookahead ${LAD_TRANSLATE_LOOKAHEAD} \
+    ${LAD_TRANSLATE_VAD_FLAG} \
     --device ${LAD_TRANSLATE_STT_DEVICE} \
     --cpu-threads ${LAD_TRANSLATE_STT_THREADS} \
     --emit-interval ${LAD_TRANSLATE_EMIT_INTERVAL} \
