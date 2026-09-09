@@ -249,14 +249,21 @@ visudo -cf /etc/sudoers.d/lad-translate-console >/dev/null
 
 # The console writes session.env, so it has to own it. Everything in there is
 # operational config; the credentials live in secrets.env, which stays 0400.
+# Who may sign in is operational state, not a secret, and it is edited on the
+# box - so carry the existing values forward. This file is REGENERATED every
+# run, so without this an allowlist entry added after a deploy silently
+# disappears at the next one and locks its owner out.
+EXISTING_EMAILS="$(grep -oP '^CONSOLE_ALLOWED_EMAILS=\K.*' /etc/lad-translate/console.env 2>/dev/null || true)"
+EXISTING_DOMAINS="$(grep -oP '^CONSOLE_ALLOWED_DOMAINS=\K.*' /etc/lad-translate/console.env 2>/dev/null || true)"
+
 cat > /etc/lad-translate/console.env <<EOF
 LAD_TRANSLATE_PUBLIC_BASE=${LAD_TRANSLATE_PUBLIC_BASE:-https://lad-translate-dev-kunfx3bnvq-ww.a.run.app}
 CONSOLE_OAUTH_CLIENT_ID=${CONSOLE_CLIENT_ID}
 CONSOLE_OAUTH_CLIENT_SECRET=${CONSOLE_CLIENT_SECRET}
 CONSOLE_OAUTH_REDIRECT_URI=https://${LAD_TRANSLATE_SFU_HOST}/console/auth/callback
 CONSOLE_SESSION_SECRET=${CONSOLE_SESSION_SECRET}
-CONSOLE_ALLOWED_DOMAINS=${CONSOLE_ALLOWED_DOMAINS:-techiemaya.com}
-CONSOLE_ALLOWED_EMAILS=${CONSOLE_ALLOWED_EMAILS:-}
+CONSOLE_ALLOWED_DOMAINS=${CONSOLE_ALLOWED_DOMAINS:-${EXISTING_DOMAINS:-techiemaya.com}}
+CONSOLE_ALLOWED_EMAILS=${CONSOLE_ALLOWED_EMAILS:-${EXISTING_EMAILS}}
 EOF
 # Carries the OAuth client secret, so it is not world-readable like the rest of
 # the operational config.

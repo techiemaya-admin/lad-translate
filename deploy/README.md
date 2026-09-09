@@ -405,7 +405,15 @@ The session secret signs the login cookie; rotating it signs everyone out, which
 is the intended way to revoke access in a hurry.
 
 Who may sign in comes from `CONSOLE_ALLOWED_DOMAINS` (default `techiemaya.com`)
-and `CONSOLE_ALLOWED_EMAILS` in `/etc/lad-translate/console.env`.
+and `CONSOLE_ALLOWED_EMAILS` in `/etc/lad-translate/console.env`. Edit that file
+and restart `lad-translate-console`; bootstrap carries both forward on a re-run,
+because it regenerates the file and an entry added after a deploy would
+otherwise vanish at the next one and lock its owner out.
+
+A refusal names the address it refused — `x@y.com is not permitted to use this
+console` — which is the distinction basic auth never made. Google blocking the
+sign-in earlier, with *"app not verified"*, is a different failure: that is the
+consent screen's test-user list, not this allowlist.
 
 **Privileges.** It runs as `ladtranslate` and reaches systemd through
 `/etc/sudoers.d/lad-translate-console`: three verbs, one unit pattern, nothing
