@@ -31,6 +31,7 @@ from ..obs.log import get_logger
 from .backpressure import BacklogGuard, guarded
 from .drift import DriftController, DriftPolicy
 from .room import TranslationRoom
+from .sinks import AudioSink
 
 log = get_logger(__name__)
 
@@ -104,7 +105,7 @@ class _LanguageWorker:
         # Read the playout queue before committing to synthesis, so the drift
         # decision is made on current state rather than on state from before
         # the previous phrase was spoken.
-        session.drift.observe(self.language, session.room.queue_depth(self.language))
+        session.drift.observe(self.language, session.sink.queue_depth(self.language))
 
         if session.drift.should_skip(self.language):
             session.drift.note_skipped(self.language, chunk.t_audio_end - chunk.t_audio_start, chunk.chunk_id)
@@ -123,7 +124,7 @@ class _LanguageWorker:
                 session.recorder.mark(
                     chunk.chunk_id, self.language, Stage.TTS_FIRST_AUDIO, speech.t_wall
                 )
-            await session.room.push(self.language, speech.pcm, speech.sample_rate)
+            await session.sink.push(self.language, speech.pcm, speech.sample_rate)
             if first:
                 session.recorder.mark(
                     chunk.chunk_id, self.language, Stage.PUBLISHED, time.monotonic()
@@ -148,6 +149,7 @@ class TranslationSession:
         drift_policy: DriftPolicy | None = None,
         drift_policies: dict[str, DriftPolicy] | None = None,
         max_lag_s: float = 3.0,
+        sink: AudioSink | None = None,
     ) -> None:
         self.config = config
         self.room = room
@@ -155,6 +157,12 @@ class TranslationSession:
         self.mt = mt
         self.tts = tts
         self.store = store
+        # Where synthesised speech goes. Defaults to the room, so a session
+        # with no hardware output behaves exactly as before. `room` stays a
+        # separate attribute because subscribing to the speaker's track is
+        # LiveKit's job, not a sink's: audio comes IN over WebRTC whatever it
+        # goes out over. See session/sinks.py.
+        self.sink: AudioSink = sink if sink is not None else room
 
         # LocalAgreement-n exists to find stability in output that gets
         # revised. An RNNT hypothesis threaded through previous_hypotheses is
@@ -207,7 +215,7 @@ class TranslationSession:
         self._last_audio_at = self._started_at
         log_ = log.bind(session_id=self.config.session_id, tenant_id=self.config.tenant.tenant_id)
 
-        await self.room.publish_languages(self.config.target_codes)
+        await self.sink.publish_languages(self.config.target_codes)
         for language in self.config.target_codes:
             worker = _LanguageWorker(language, self)
             worker.start()
@@ -409,6 +417,12 @@ class TranslationSession:
     async def _shutdown(self) -> None:
         for worker in self._workers.values():
             await worker.stop()
+        # Sink first: a hardware device should stop being fed before the room
+        # it mirrors goes away. Then the room, which the session owns whatever
+        # the sink is -- it carries the source subscription, not just output.
+        # room.close() is idempotent, so the usual case where the sink already
+        # closed it costs nothing.
+        await self.sink.close()
         await self.room.close()
 
     async def _settle(self) -> SessionOutcome:
