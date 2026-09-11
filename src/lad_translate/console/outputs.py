@@ -52,6 +52,19 @@ from . import env
 
 log = get_logger(__name__)
 
+KINDS_WITH_AN_ENGINE: dict[str, str] = {
+    "aes67": "session/aes67.py, run by tools/output_agent.py at the venue",
+}
+"""
+Which device kinds actually route audio, and by what.
+
+The dropdown offers every value the schema accepts, because a profile saved
+for a rig that arrives next month is a reasonable thing to store. But a value
+in a dropdown reads as a capability, and four of the five are not one. The
+page labels each option from this table so the dropdown says so itself. Add a
+kind here when its sink lands, not before.
+"""
+
 UNDEFINED_TABLE = "42P01"
 """Postgres: relation does not exist. What a tenant schema without migration
 002 answers, and the one database error that is a configuration state rather
@@ -208,7 +221,11 @@ def install(app: FastAPI, prefix: str) -> None:
             "tenant": None,
             "devices": [],
             "languages": languages,
-            "kinds": list(DEVICE_KINDS),
+            "kinds": [
+                {"key": kind, "built": kind in KINDS_WITH_AN_ENGINE,
+                 "engine": KINDS_WITH_AN_ENGINE.get(kind)}
+                for kind in DEVICE_KINDS
+            ],
             "sample_rates": list(DEVICE_SAMPLE_RATES),
         }
         if not cfg.configured:

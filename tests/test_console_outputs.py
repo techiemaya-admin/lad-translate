@@ -337,3 +337,23 @@ async def test_signage_for_a_device_with_no_ir_channels_says_so(ready):
     )
     r = await ready.get(f"{BASE}/devices/{r.json()['device_id']}/signage")
     assert "No IR channels" in r.text
+
+
+async def test_the_dropdown_says_which_kinds_route_audio(env_file: Path):
+    """
+    A value in a dropdown reads as a capability. Four of the five are not
+    one, and the page must be able to say so per option - from the server's
+    table, so adding a sink is one edit in one place.
+    """
+    from lad_translate.config import DEVICE_KINDS
+    from lad_translate.console.outputs import KINDS_WITH_AN_ENGINE
+
+    async with await _client(env_file) as c:
+        _signed_in(c)
+        kinds = (await c.get(BASE)).json()["kinds"]
+
+    assert [k["key"] for k in kinds] == list(DEVICE_KINDS)
+    built = {k["key"] for k in kinds if k["built"]}
+    assert built == set(KINDS_WITH_AN_ENGINE) == {"aes67"}
+    for k in kinds:
+        assert (k["engine"] is not None) == k["built"]
