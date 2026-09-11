@@ -80,11 +80,10 @@
           <label>Host audio device <input id="dev-device-name" placeholder="Dante Virtual Soundcard" spellcheck="false"></label>
           <label>Kind <select id="dev-kind"></select>
             <span class="hint">
-              Only <strong>aes67</strong> has an output engine today:
-              <code>tools/output_agent.py</code> at the venue, which Dante
-              devices receive with AES67 mode switched on. dante-vsc, coreaudio,
-              asio and alsa are stored for a future local-card agent and route
-              nothing yet.
+              Kinds marked <em>not built</em> are stored for a future local-card
+              agent and route nothing. <strong>aes67</strong> is live:
+              <code>tools/output_agent.py</code> at the venue, received by Dante
+              devices with AES67 mode switched on.
             </span>
           </label>
           <label>Channels on the card <input id="dev-channel-count" type="number" min="1" max="64" value="16"></label>

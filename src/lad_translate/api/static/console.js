@@ -296,8 +296,12 @@
 
       var meta = document.createElement("p");
       meta.className = "meta";
-      meta.textContent = d.kind + " · " + d.device_name + " · " + d.channel_count +
-        " channels · " + d.sample_rate + " Hz";
+      var kindInfo = null;
+      for (var k = 0; k < outputs.kinds.length; k++) {
+        if (outputs.kinds[k].key === d.kind) kindInfo = outputs.kinds[k];
+      }
+      meta.textContent = d.kind + (kindInfo && kindInfo.built === false ? " (not built)" : "") +
+        " · " + d.device_name + " · " + d.channel_count + " channels · " + d.sample_rate + " Hz";
       card.appendChild(meta);
 
       var map = document.createElement("ul");
@@ -393,10 +397,27 @@
     select.innerHTML = "";
     values.forEach(function (v) {
       var opt = document.createElement("option");
-      opt.value = String(v); opt.textContent = String(v);
-      if (String(v) === String(current)) opt.selected = true;
+      // Kinds arrive as {key, built, engine}; sample rates as numbers. A kind
+      // without an engine says so in its own label, because a bare value in
+      // a dropdown reads as something that works.
+      var key = (v !== null && typeof v === "object") ? v.key : v;
+      opt.value = String(key);
+      opt.textContent = (v !== null && typeof v === "object" && v.built === false)
+        ? key + " \u2014 not built"
+        : String(key);
+      if (v !== null && typeof v === "object" && v.engine) opt.title = v.engine;
+      if (String(key) === String(current)) opt.selected = true;
       select.appendChild(opt);
     });
+  }
+
+  function defaultKind() {
+    // The first kind with an engine, so a new device starts on something
+    // that routes audio rather than on the schema's first value.
+    for (var i = 0; i < outputs.kinds.length; i++) {
+      if (outputs.kinds[i].built) return outputs.kinds[i].key;
+    }
+    return outputs.kinds.length ? outputs.kinds[0].key : "aes67";
   }
 
   function renderMatrix() {
@@ -477,7 +498,7 @@
     el.editorTitle.textContent = device ? "Edit “" + device.name + "”" : "New device";
     el.devName.value = device ? device.name : "";
     el.devDeviceName.value = device ? device.device_name : "";
-    fillSelect(el.devKind, outputs.kinds, device ? device.kind : "dante-vsc");
+    fillSelect(el.devKind, outputs.kinds, device ? device.kind : defaultKind());
     el.devChannelCount.value = device ? device.channel_count : 16;
     fillSelect(el.devSampleRate, outputs.sampleRates, device ? device.sample_rate : 48000);
     el.devEnabled.checked = device ? device.enabled : true;
