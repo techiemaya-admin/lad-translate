@@ -222,6 +222,13 @@ class TranslationRoom:
             )
 
     async def close(self) -> None:
+        # Idempotent. The session closes its sink and then the room, and when
+        # the room IS the sink -- the default, and the primary of any
+        # FanOutSink -- that is the same object twice. Disconnecting an
+        # already-disconnected room is not worth making every caller reason
+        # about. See session/sinks.py.
+        if self._closing:
+            return
         self._closing = True
         for entry in self._tracks.values():
             await entry.source.aclose()

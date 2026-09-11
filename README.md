@@ -32,6 +32,8 @@ to a room yet.
 | Session pipeline (`session/pipeline.py`) | Done, 15 tests |
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
 | Browser join page | Done, 38 tests |
+| Hardware output config and operator API (`api/admin.py`, `db/outputs.py`) | Done, 48 tests |
+| Audio sink interface (`session/sinks.py`) | Done, 10 tests; no hardware sink yet |
 | Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
 ## Measured on the dev Mac
@@ -1312,6 +1314,107 @@ at, so one page serves both shapes:
 
 The join response carries `session_id` because a page reached by room name
 never saw one, and needs it to report the listener leaving.
+
+## Hardware output: Dante and the IR rig
+
+WebRTC is not the only way out. A venue that already owns an infrared
+interpretation system wants the same translated audio on physical handsets, and
+that path is analog or Dante into the IR transmitter's per-channel inputs.
+
+What exists today is the configuration and the seam, not the audio engine.
+`session/sinks.py` defines `AudioSink`, `TranslationRoom` already satisfies it,
+and `FanOutSink` carries one primary and any number of secondaries. The pipeline
+pushes to `session.sink` rather than `session.room`. Nothing else is wired: a
+session with no hardware output behaves exactly as it did.
+
+### The channel map
+
+Held per venue, not per session. A venue's rig is stable across events, and
+re-patching in software before every event is the error-prone step this removes.
+
+    device   Main hall DVS, "Dante Virtual Soundcard", 16 channels, 48000 Hz
+      ch 1   en   floor feed, no IR
+      ch 2   fr   IR channel 1
+      ch 3   ar   IR channel 2
+      ch 4   hi   IR channel 3
+      ch 9   fr   IR none, -6 dB, to the recorder
+
+Two rules, both enforced in `config.OutputDevice` and again as constraints:
+
+- **A channel carries one language.** A wire carries one signal. One language
+  may hold several channels -- French to the transmitter and again to a
+  recorder, at a different level, is ordinary.
+- **An IR channel carries one language.** The number on the handset is recorded
+  separately from the Dante channel index, because the transmitter's inputs are
+  patched by hand and the signage was printed days earlier. Tying the two
+  together is how the rig and the signage drift apart.
+
+### The operator API
+
+`tools/serve_admin.py`, read and written by the portal in LAD-Frontend.
+
+```bash
+export LAD_ADMIN_TOKEN="$(openssl rand -hex 32)"
+.venv/bin/python tools/serve_admin.py --host 127.0.0.1 --port 8081
+```
+
+    GET     /api/admin/outputs/devices
+    POST    /api/admin/outputs/devices
+    GET     /api/admin/outputs/devices/{device_id}
+    PUT     /api/admin/outputs/devices/{device_id}
+    DELETE  /api/admin/outputs/devices/{device_id}
+
+A separate app on a separate port, deliberately. The join service is reachable
+by every phone in the room; this one decides which language reaches which wire,
+and the two do not belong on the same origin.
+
+Authentication is one bearer token in `LAD_ADMIN_TOKEN`, identifying the portal
+rather than a person, with the tenant explicit in `X-Tenant-Id`. There is no
+default token: unset, the API refuses everything rather than allowing it. Which
+*operator* changed a patch is the portal's job to know.
+
+PUT replaces a device and its whole map, and edits rather than creates. The
+portal sends the patch the operator drew, not the moves they made drawing it, so
+a dropped request leaves the previous patch intact and swapping two languages
+does not collide with itself halfway through.
+
+### Dante Virtual Soundcard does not run on Linux
+
+DVS is Windows and macOS only. The GPU box cannot host it, so the output host is
+the Mac or a Windows machine, and the next step is one of:
+
+- run the whole pipeline on the DVS host, which the 2014 Mac cannot do for five
+  languages; or
+- split it -- STT, MT and TTS on the GPU box, a thin output agent on the DVS
+  host receiving PCM and writing it to the card.
+
+The second is the real answer and the channel map is stored so either works.
+
+### What a Dante sink has to do that the LiveKit one does not
+
+Worth knowing before writing it.
+
+**It is clocked.** LiveKit's `AudioSource` is pushed when there is speech and
+sends nothing between phrases; DTX exists precisely because each language is
+quiet while the others speak. A sound card consumes a sample every 1/48000s
+forever and must be fed silence when nobody is talking. So the sink is a ring
+buffer per language plus a pump, not a thin wrapper, and its `queue_depth` is
+the fill of that buffer.
+
+**It resamples.** Piper renders at 22050 Hz and Dante runs the card at whatever
+Dante Controller set, usually 48000. The rate is stored on the device profile so
+the mismatch is caught when the profile is saved rather than as a pitch-shifted
+channel at the event.
+
+**It must not be able to end the session.** `FanOutSink` raises only for its
+primary and degrades for the rest. The phones are the product; the IR rig is an
+addition, and adding it must not make the service less reliable than not having
+it.
+
+**Drift reads the worst queue, not the sum.** `FanOutSink.queue_depth` returns
+the maximum across sinks. Handsets drifting while WebRTC is healthy is still an
+audience out of sync; summing would double-count one phrase and make
+`session/drift.py` skip far too eagerly.
 
 ## Listening without a phone
 

@@ -97,6 +97,148 @@ class SessionLimits:
     """Log a warning once this fraction of any limit is reached."""
 
 
+DEVICE_KINDS = ("dante-vsc", "aes67", "coreaudio", "asio", "alsa")
+"""Output device kinds, matching the CHECK in migrations/002_audio_outputs.sql."""
+
+DEVICE_SAMPLE_RATES = (44100, 48000, 88200, 96000)
+"""Rates Dante and the pro-audio world run at. Mirrors the same CHECK."""
+
+
+@dataclass(frozen=True, slots=True)
+class OutputChannel:
+    """
+    One language on one physical channel of an output device.
+
+    A language may hold several channels -- the same French feeding the IR
+    transmitter and a recorder is ordinary -- but a channel carries exactly one
+    language, because a wire carries one signal.
+    """
+
+    language: str
+    """BCP-47, matching LanguageTarget.code. The source language is allowed:
+    venues put the floor feed on a channel for the booth and the recorder."""
+
+    channel: int
+    """1-based position on the device."""
+
+    ir_channel: int | None = None
+    """
+    The number the audience's handset shows, when this channel feeds the IR
+    transmitter. Recorded separately from `channel` because the transmitter's
+    inputs are patched by hand and the signage was printed days earlier; tying
+    the two together is how the rig and the signage drift apart.
+    """
+
+    label: str = ""
+    """Shown in the portal and printed on signage. Blank falls back to the
+    language's own name."""
+
+    gain_db: float = 0.0
+    """Per-channel trim. An IR transmitter wants a hotter feed than a
+    recorder, so one language often needs two levels on two channels."""
+
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.language.strip():
+            raise ValueError("an output channel needs a language")
+        if self.channel < 1:
+            raise ValueError(
+                f"channel numbers are 1-based; got {self.channel} for {self.language!r}"
+            )
+        if self.ir_channel is not None and not 1 <= self.ir_channel <= 99:
+            raise ValueError(
+                f"IR channel {self.ir_channel} for {self.language!r} is outside 1-99"
+            )
+        if not -60.0 <= self.gain_db <= 12.0:
+            raise ValueError(
+                f"gain {self.gain_db}dB for {self.language!r} is outside -60..+12; "
+                "beyond that the gain structure upstream is wrong and this only "
+                "raises the noise floor with it"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class OutputDevice:
+    """
+    A venue's hardware output and its channel map.
+
+    Held as a profile rather than per session because a venue's rig is stable
+    across events. Re-patching in software before every event is exactly the
+    error-prone step this removes.
+    """
+
+    device_id: str
+    name: str
+    device_name: str
+    """The host audio device to open, as the OS names it ("Dante Virtual
+    Soundcard"). Opaque here: the sink that opens it reports a name it cannot
+    find."""
+
+    channel_count: int
+    kind: str = "dante-vsc"
+    sample_rate: int = 48000
+    """Dante fixes the card's rate in Dante Controller. Piper renders at 22050,
+    so the sink resamples to this; storing it catches the mismatch when the
+    profile is saved rather than as a pitch-shifted channel at the event."""
+
+    enabled: bool = True
+    channels: tuple[OutputChannel, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("an output device needs a name")
+        if not self.device_name.strip():
+            raise ValueError(f"device {self.name!r} needs a host device name to open")
+        if self.kind not in DEVICE_KINDS:
+            raise ValueError(f"unknown device kind {self.kind!r}; one of {DEVICE_KINDS}")
+        if self.sample_rate not in DEVICE_SAMPLE_RATES:
+            raise ValueError(
+                f"sample rate {self.sample_rate} is not one of {DEVICE_SAMPLE_RATES}"
+            )
+        if not 1 <= self.channel_count <= 64:
+            raise ValueError(
+                f"device {self.name!r} claims {self.channel_count} channels; "
+                "DVS licences are 16x16 or 64x64"
+            )
+
+        # The bound a CHECK constraint cannot express, because channel_count
+        # lives on this row and the channel lives on another table's.
+        for channel in self.channels:
+            if channel.channel > self.channel_count:
+                raise ValueError(
+                    f"channel {channel.channel} ({channel.language}) is beyond the "
+                    f"{self.channel_count} channels {self.name!r} exposes"
+                )
+
+        taken = [c.channel for c in self.channels]
+        if len(taken) != len(set(taken)):
+            raise ValueError(f"two languages share a channel on {self.name!r}: {sorted(taken)}")
+
+        ir = [c.ir_channel for c in self.channels if c.ir_channel is not None]
+        if len(ir) != len(set(ir)):
+            raise ValueError(
+                f"two languages share an IR channel on {self.name!r}: {sorted(ir)}; "
+                "the audience would tune to one number and hear either"
+            )
+
+    @property
+    def languages(self) -> list[str]:
+        """Distinct languages this device carries, in channel order."""
+        seen: list[str] = []
+        for channel in sorted(self.channels, key=lambda c: c.channel):
+            if channel.enabled and channel.language not in seen:
+                seen.append(channel.language)
+        return seen
+
+    def channels_for(self, language: str) -> list[OutputChannel]:
+        """Every enabled channel carrying one language, in channel order."""
+        return sorted(
+            (c for c in self.channels if c.enabled and c.language == language),
+            key=lambda c: c.channel,
+        )
+
+
 @dataclass(slots=True)
 class SessionConfig:
     """Everything one translation session needs."""
