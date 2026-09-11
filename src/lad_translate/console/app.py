@@ -17,12 +17,13 @@ import io
 import json
 import os
 import secrets
+import subprocess
 import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -44,6 +45,28 @@ The alternative - strip it at the proxy and serve from the root - is what broke
 the first deploy: the page's absolute asset paths landed outside the protected
 route and the browser re-prompted for credentials on every one.
 """
+
+
+def build_id() -> str:
+    """
+    Which build this is, for the console's footer.
+
+    The git short SHA of the checkout, because "reload the console" has
+    already once meant reloading a page the VM was not serving yet; a build
+    stamp in the corner turns that into a glance. LAD_TRANSLATE_BUILD wins
+    when set, for a container that carries no .git.
+    """
+    stamped = os.getenv("LAD_TRANSLATE_BUILD")
+    if stamped:
+        return stamped
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parents[3]), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=3, check=False,
+        )
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 class ApplyRequest(BaseModel):
@@ -106,6 +129,7 @@ def create_app(
     )
     app.state.public_base = public_base.rstrip("/")
     app.state.env_path = env_path or env.DEFAULT_PATH
+    app.state.build = build_id()
     # Built eagerly when a pool is handed in, for the same reason api/admin.py
     # does: a test client can drive the app without ever running the lifespan.
     app.state.outputs = outputs.OutputsConfig(
@@ -186,7 +210,20 @@ def create_app(
     @app.get(PREFIX)
     @app.get(f"{PREFIX}/")
     async def page():
-        return FileResponse(STATIC_DIR / "console.html")
+        """
+        The page, with its assets stamped by build.
+
+        The stylesheet and script are cached hard by the browser - that is
+        what made the QR fix necessary - so after a deploy an operator can be
+        running last week's script against this week's API and see a panel
+        that will not render. A ?v=<build> on each asset link makes a new
+        build a new URL; the substring the tests look for is unchanged.
+        """
+        html = (STATIC_DIR / "console.html").read_text(encoding="utf-8")
+        stamp = f"?v={app.state.build}"
+        html = html.replace(f"{PREFIX}/static/console.css", f"{PREFIX}/static/console.css{stamp}")
+        html = html.replace(f"{PREFIX}/static/console.js", f"{PREFIX}/static/console.js{stamp}")
+        return Response(html, media_type="text/html")
 
     @app.get(f"{PREFIX}/api/presets")
     async def presets():
@@ -199,6 +236,7 @@ def create_app(
             "settings": {k: v for k, v in current.items() if k in env.EDITABLE},
             "editable": sorted(env.EDITABLE),
             "public_base": app.state.public_base,
+            "build": app.state.build,
         }
 
     @app.get(f"{PREFIX}/api/status")
