@@ -33,7 +33,8 @@ to a room yet.
 | Listener tokens (`api/tokens.py`) | Done, 10 tests |
 | Browser join page | Done, 38 tests |
 | Hardware output config and operator API (`api/admin.py`, `db/outputs.py`) | Done, 48 tests |
-| Audio sink interface (`session/sinks.py`) | Done, 10 tests; no hardware sink yet |
+| Audio sink interface (`session/sinks.py`) | Done, 10 tests |
+| AES67 output (`session/aes67.py`, `tools/output_agent.py`) | Done, 17 tests against a loopback receiver; **not yet against a Dante device** |
 | Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
 ## Measured on the dev Mac
@@ -1378,21 +1379,65 @@ portal sends the patch the operator drew, not the moves they made drawing it, so
 a dropped request leaves the previous patch intact and swapping two languages
 does not collide with itself halfway through.
 
-### Dante Virtual Soundcard does not run on Linux
+### The console owns the editor
 
-DVS is Windows and macOS only. The GPU box cannot host it, so the output host is
-the Mac or a Windows machine, and the next step is one of:
+The channel map is edited in the operator console (`/console`, the panel at
+the bottom), not in a separate portal: the person patching French onto IR
+channel 2 at eight in the morning is the person who picked the preset and
+printed the QR codes. The portal API above stays for a portal that wants it;
+both mount the same five operations from `api/admin.py`. The console fixes the
+tenant to the one in `session.env` and ignores any header naming another.
 
-- run the whole pipeline on the DVS host, which the 2014 Mac cannot do for five
-  languages; or
-- split it -- STT, MT and TTS on the GPU box, a thin output agent on the DVS
-  host receiving PCM and writing it to the card.
+### AES67 is the output engine, and it runs at the venue
 
-The second is the real answer and the channel map is stored so either works.
+Dante Virtual Soundcard is Windows and macOS only, so the plan to write a DVS
+sink meant an output host that could not run the pipeline. AES67 is the way
+round it. Dante devices receive AES67 flows natively once AES67 mode is on in
+Dante Controller, and an AES67 sender is UDP multicast - it runs on anything
+with a network port, including a Raspberry Pi in the rack.
 
-### What a Dante sink has to do that the LiveKit one does not
+`session/aes67.py` is the sink: L24 at 48 kHz, one RTP packet every
+millisecond per flow, up to 8 channels a flow, SAP/SDP announced. A device's
+channel map becomes flows: a 16-channel card is channels 1-8 and 9-16 on two
+consecutive multicast groups, trimmed to the last patched channel because an
+8-channel flow is 9.2 Mbit/s whether or not it carries anything. It is a ring
+buffer per channel and a pump thread, not a wrapper, because a receiver that
+gets nothing between phrases does not hear silence - it drops the flow.
 
-Worth knowing before writing it.
+`tools/output_agent.py` runs it at the venue. It joins the room as a listener
+for each language the map names - the same path a phone takes, which is the
+path that is proven - and writes what it hears into the flows.
+
+```bash
+python tools/output_agent.py --base https://lad-translate-dev-...run.app \
+    --room dubai-demo --profile main-hall.json \
+    --interface 192.168.10.5 --ptp-grandmaster 00-1d-c1-ff-fe-12-34-56
+```
+
+`main-hall.json` is the "Profile JSON" button on the device's card.
+
+**The media clock is PTP and the agent does not do PTP.** AES67 stamps RTP
+timestamps from IEEE 1588 time; the agent stamps from the system clock. On a
+host running linuxptp (`ptp4l` slaved to the venue's grandmaster, `phc2sys`
+disciplining the system clock) that is the same thing and the flow locks. On
+a host without it, the packets are valid RTP that a software receiver plays
+and a Dante device lists with a clock warning. The agent's docstring is the
+host checklist.
+
+**Measured against a loopback receiver, not a Dante device.** Framing,
+sequence and timestamp continuity, channel interleave and gain, silence fill
+and rate are tested in `tests/test_aes67.py` by decoding what arrives on a
+socket. What is not tested is whether a Dante device in AES67 mode accepts
+the flow: that needs a Dante device, a PTP grandmaster and a room. The first
+time it meets one, expect to adjust the SDP - Dante is particular about it.
+
+The other kinds in the dropdown - `dante-vsc`, `coreaudio`, `asio`, `alsa` -
+are stored for a future local-card agent and route nothing. The console says
+so under the field.
+
+### What a hardware sink has to do that the LiveKit one does not
+
+What `session/aes67.py` does, and what any local-card sink would have to.
 
 **It is clocked.** LiveKit's `AudioSource` is pushed when there is speech and
 sends nothing between phrases; DTX exists precisely because each language is

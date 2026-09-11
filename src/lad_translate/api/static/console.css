@@ -107,6 +107,8 @@ code { font-size: .68rem; color: #7f8899; word-break: break-all; display: block;
 .grid2 label { display: grid; gap: .25rem; font-size: .82rem; color: var(--dim); }
 .grid2 label.check { grid-template-columns: auto 1fr; align-items: center; align-self: end; padding-bottom: .5rem; }
 .grid2 input, .grid2 select { width: 100%; }
+.grid2 .hint { font-size: .74rem; color: var(--dim); line-height: 1.35; }
+.grid2 .hint code { display: inline; font-size: .72rem; color: #b6becc; margin: 0; }
 .matrix-wrap { overflow-x: auto; margin: .4rem 0 .6rem; }
 .matrix { border-collapse: collapse; width: 100%; font-size: .84rem; }
 .matrix th { text-align: left; color: var(--dim); font-weight: 500; font-size: .78rem;
