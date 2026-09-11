@@ -7,110 +7,225 @@
   <link rel="stylesheet" href="/console/static/console.css">
 </head>
 <body>
-  <header>
-    <h1>Live Translation</h1>
-    <div class="room">
-      <label for="room">Room</label>
-      <input id="room" value="dubai-demo" spellcheck="false" autocapitalize="off">
-    </div>
-  </header>
+  <div class="shell">
 
-  <main>
-    <section class="panel" id="status-panel">
-      <h2>Session <span id="pill" class="pill">…</span></h2>
-      <dl id="status"></dl>
-      <p class="note" id="status-note"></p>
-      <div class="actions">
-        <button id="restart" class="primary">Apply &amp; restart</button>
-        <button id="stop">Stop</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Preset</h2>
-      <p class="note">
-        Each carries what it actually measured. The warnings are the point:
-        a pair that looked better on paper dropped 225 seconds of live speech.
-      </p>
-      <div id="presets"></div>
-    </section>
-
-    <section class="panel">
-      <h2>QR codes</h2>
-      <p class="note">
-        Room URLs, so they survive a restart. Scan the speaker code and start
-        talking <em>before</em> joining as a listener.
-      </p>
-      <div class="qr-pair">
-        <figure><img id="qr-speak" alt="Speaker QR code"><figcaption>Speaker — publishes the mic</figcaption><code id="url-speak"></code></figure>
-        <figure><img id="qr-listen" alt="Listener QR code"><figcaption>Listener — picks a language</figcaption><code id="url-listen"></code></figure>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>
-        Advanced
-        <button id="toggle-advanced" class="link" aria-expanded="false">show</button>
-      </h2>
-      <p class="note">
-        Raw values. <strong>emit interval and window move together</strong> —
-        changing one alone is how the pipeline ends up shedding audio.
-      </p>
-      <div id="advanced" hidden></div>
-    </section>
-
-    <section class="panel wide" id="outputs-panel">
-      <h2>Hardware output <span id="outputs-pill" class="pill">…</span></h2>
-      <p class="note">
-        The venue's rig: which language goes out on which Dante channel, and
-        which IR handset number that is. Kept per venue, not per session —
-        re-patching in software before every event is the step this removes.
-      </p>
-      <p class="state" id="outputs-state" hidden></p>
-
-      <div id="devices"></div>
-      <div class="actions">
-        <button id="add-device">Add device</button>
+    <aside class="sidebar" aria-label="Console navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">LT</span>
+        <span class="brand-text">
+          <strong>Live Translation</strong>
+          <small>Operator console</small>
+        </span>
       </div>
 
-      <div id="device-editor" class="editor" hidden>
-        <h3 id="editor-title">New device</h3>
-        <div class="grid2">
-          <label>Name <input id="dev-name" placeholder="Main hall DVS" spellcheck="false"></label>
-          <label>Host audio device <input id="dev-device-name" placeholder="Dante Virtual Soundcard" spellcheck="false"></label>
-          <label>Kind <select id="dev-kind"></select>
-            <span class="hint">
-              Kinds marked <em>not built</em> are stored for a future local-card
-              agent and route nothing. <strong>aes67</strong> is live:
-              <code>tools/output_agent.py</code> at the venue, received by Dante
-              devices with AES67 mode switched on.
-            </span>
+      <nav class="nav">
+        <a href="#overview" class="nav-link active" data-section="overview">
+          <span class="nav-icon" aria-hidden="true">◉</span> Overview
+        </a>
+        <a href="#presets" class="nav-link" data-section="presets">
+          <span class="nav-icon" aria-hidden="true">⚙</span> Presets
+        </a>
+        <a href="#qr" class="nav-link" data-section="qr">
+          <span class="nav-icon" aria-hidden="true">▦</span> QR codes
+        </a>
+        <a href="#outputs" class="nav-link" data-section="outputs">
+          <span class="nav-icon" aria-hidden="true">⇶</span> Hardware output
+        </a>
+        <a href="#advanced" class="nav-link" data-section="advanced">
+          <span class="nav-icon" aria-hidden="true">⌘</span> Advanced
+        </a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="identity">
+          <span class="avatar" id="avatar" aria-hidden="true">·</span>
+          <span class="identity-text">
+            <strong id="who">Signing in…</strong>
+            <small id="build">build —</small>
+          </span>
+        </div>
+        <form method="post" action="/console/auth/logout" class="signout">
+          <button type="submit" class="ghost small">Sign out</button>
+        </form>
+      </div>
+    </aside>
+
+    <div class="content">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1 id="page-title">Overview</h1>
+          <span class="topbar-sub" id="public-host">—</span>
+        </div>
+        <div class="topbar-controls">
+          <label class="room-field">
+            <span>Room</span>
+            <input id="room" value="dubai-demo" spellcheck="false" autocapitalize="off" autocomplete="off">
           </label>
-          <label>Channels on the card <input id="dev-channel-count" type="number" min="1" max="64" value="16"></label>
-          <label>Sample rate <select id="dev-sample-rate"></select></label>
-          <label class="check"><input id="dev-enabled" type="checkbox" checked> Device enabled</label>
+          <span id="pill" class="pill">…</span>
+          <span class="refresh" id="refreshed" title="Status refreshes every 5 seconds">—</span>
         </div>
-        <p class="note">
-          One language per channel; a language may take several channels
-          (the transmitter and a recorder at a different level is ordinary).
-          The IR number is what is printed on the handset signage and is kept
-          separate from the channel index on purpose.
-        </p>
-        <div class="matrix-wrap">
-          <table class="matrix">
-            <thead><tr><th>Ch</th><th>Language</th><th>IR handset</th><th>Label</th><th>Gain dB</th><th>On</th></tr></thead>
-            <tbody id="matrix"></tbody>
-          </table>
-        </div>
-        <div class="actions">
-          <button id="save-device" class="primary">Save device</button>
-          <button id="cancel-device">Cancel</button>
-        </div>
-      </div>
-    </section>
-  </main>
+      </header>
 
-  <div id="toast" role="status" aria-live="polite" hidden></div>
+      <main>
+
+        <!-- ============================================================ -->
+        <section class="card" id="overview" data-title="Overview">
+          <div class="card-head">
+            <div>
+              <h2>Session</h2>
+              <p class="muted">What the box is doing right now, refreshed every five seconds.</p>
+            </div>
+            <div class="actions">
+              <button id="restart" class="primary">Apply &amp; restart</button>
+              <button id="stop" class="danger">Stop</button>
+            </div>
+          </div>
+
+          <div class="facts" id="facts"></div>
+
+          <div class="kpis" id="kpis"></div>
+
+          <p class="alert" id="status-note" hidden></p>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="presets" data-title="Presets">
+          <div class="card-head">
+            <div>
+              <h2>Preset</h2>
+              <p class="muted">
+                Each carries what it actually measured. The warnings are the point:
+                a pair that looked better on paper dropped 225 seconds of live speech.
+                Pick one, then <em>Apply &amp; restart</em>.
+              </p>
+            </div>
+            <span class="chip" id="preset-chosen">none selected</span>
+          </div>
+          <div class="preset-grid" id="preset-cards"></div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="qr" data-title="QR codes">
+          <div class="card-head">
+            <div>
+              <h2>QR codes</h2>
+              <p class="muted">
+                Room URLs, so they survive a restart. Scan the speaker code and start
+                talking <em>before</em> joining as a listener.
+              </p>
+            </div>
+          </div>
+          <div class="qr-pair">
+            <figure class="qr">
+              <img id="qr-speak" alt="Speaker QR code">
+              <figcaption>
+                <strong>Speaker</strong>
+                <span class="muted">publishes the microphone</span>
+              </figcaption>
+              <div class="url-row">
+                <code id="url-speak"></code>
+                <button class="ghost small" data-copy="url-speak">Copy</button>
+                <a class="ghost small btn" id="png-speak" href="#" target="_blank" rel="noopener">PNG</a>
+              </div>
+            </figure>
+            <figure class="qr">
+              <img id="qr-listen" alt="Listener QR code">
+              <figcaption>
+                <strong>Listener</strong>
+                <span class="muted">picks a language</span>
+              </figcaption>
+              <div class="url-row">
+                <code id="url-listen"></code>
+                <button class="ghost small" data-copy="url-listen">Copy</button>
+                <a class="ghost small btn" id="png-listen" href="#" target="_blank" rel="noopener">PNG</a>
+              </div>
+            </figure>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="outputs" data-title="Hardware output">
+          <div class="card-head">
+            <div>
+              <h2>Hardware output <span id="outputs-pill" class="pill">…</span></h2>
+              <p class="muted">
+                The venue's rig: which language goes out on which Dante channel, and
+                which IR handset number that is. Kept per venue, not per session —
+                re-patching in software before every event is the step this removes.
+              </p>
+            </div>
+            <div class="actions">
+              <button id="add-device" class="primary">Add device</button>
+            </div>
+          </div>
+
+          <p class="alert warn" id="outputs-state" hidden></p>
+
+          <div id="devices" class="device-list"></div>
+
+          <div id="device-editor" class="editor" hidden>
+            <div class="editor-head">
+              <h3 id="editor-title">New device</h3>
+              <button id="cancel-device-x" class="ghost small" aria-label="Close editor">✕</button>
+            </div>
+            <div class="grid2">
+              <label>Name <input id="dev-name" placeholder="Main hall DVS" spellcheck="false"></label>
+              <label>Host audio device <input id="dev-device-name" placeholder="Dante Virtual Soundcard" spellcheck="false"></label>
+              <label>Kind <select id="dev-kind"></select>
+                <span class="hint">
+                  Kinds marked <em>not built</em> are stored for a future local-card
+                  agent and route nothing. <strong>aes67</strong> is live:
+                  <code>tools/output_agent.py</code> at the venue, received by Dante
+                  devices with AES67 mode switched on.
+                </span>
+              </label>
+              <label>Channels on the card <input id="dev-channel-count" type="number" min="1" max="64" value="16"></label>
+              <label>Sample rate <select id="dev-sample-rate"></select></label>
+              <label class="check"><input id="dev-enabled" type="checkbox" checked> Device enabled</label>
+            </div>
+            <p class="muted small-note">
+              One language per channel; a language may take several channels
+              (the transmitter and a recorder at a different level is ordinary).
+              The IR number is what is printed on the handset signage and is kept
+              separate from the channel index on purpose.
+            </p>
+            <div class="matrix-wrap">
+              <table class="matrix">
+                <thead><tr><th>Ch</th><th>Language</th><th>IR handset</th><th>Label</th><th>Gain dB</th><th>On</th></tr></thead>
+                <tbody id="matrix"></tbody>
+              </table>
+            </div>
+            <div class="editor-foot">
+              <span class="muted" id="matrix-summary"></span>
+              <div class="actions">
+                <button id="cancel-device">Cancel</button>
+                <button id="save-device" class="primary">Save device</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="advanced" data-title="Advanced">
+          <div class="card-head">
+            <div>
+              <h2>Advanced <span class="chip" id="advanced-changes" hidden>0 changed</span></h2>
+              <p class="muted">
+                Raw values, applied with <em>Apply &amp; restart</em>.
+                <strong>Emit interval and window move together</strong> — changing
+                one alone is how the pipeline ends up shedding audio.
+              </p>
+            </div>
+            <button id="toggle-advanced" class="ghost" aria-expanded="false">Show</button>
+          </div>
+          <div id="advanced-fields" class="grid2" hidden></div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
   <script src="/console/static/console.js"></script>
 </body>
 </html>
