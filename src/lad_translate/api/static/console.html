@@ -58,6 +58,49 @@
       </p>
       <div id="advanced" hidden></div>
     </section>
+
+    <section class="panel wide" id="outputs-panel">
+      <h2>Hardware output <span id="outputs-pill" class="pill">…</span></h2>
+      <p class="note">
+        The venue's rig: which language goes out on which Dante channel, and
+        which IR handset number that is. Kept per venue, not per session —
+        re-patching in software before every event is the step this removes.
+      </p>
+      <p class="state" id="outputs-state" hidden></p>
+
+      <div id="devices"></div>
+      <div class="actions">
+        <button id="add-device">Add device</button>
+      </div>
+
+      <div id="device-editor" class="editor" hidden>
+        <h3 id="editor-title">New device</h3>
+        <div class="grid2">
+          <label>Name <input id="dev-name" placeholder="Main hall DVS" spellcheck="false"></label>
+          <label>Host audio device <input id="dev-device-name" placeholder="Dante Virtual Soundcard" spellcheck="false"></label>
+          <label>Kind <select id="dev-kind"></select></label>
+          <label>Channels on the card <input id="dev-channel-count" type="number" min="1" max="64" value="16"></label>
+          <label>Sample rate <select id="dev-sample-rate"></select></label>
+          <label class="check"><input id="dev-enabled" type="checkbox" checked> Device enabled</label>
+        </div>
+        <p class="note">
+          One language per channel; a language may take several channels
+          (the transmitter and a recorder at a different level is ordinary).
+          The IR number is what is printed on the handset signage and is kept
+          separate from the channel index on purpose.
+        </p>
+        <div class="matrix-wrap">
+          <table class="matrix">
+            <thead><tr><th>Ch</th><th>Language</th><th>IR handset</th><th>Label</th><th>Gain dB</th><th>On</th></tr></thead>
+            <tbody id="matrix"></tbody>
+          </table>
+        </div>
+        <div class="actions">
+          <button id="save-device" class="primary">Save device</button>
+          <button id="cancel-device">Cancel</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div id="toast" role="status" aria-live="polite" hidden></div>

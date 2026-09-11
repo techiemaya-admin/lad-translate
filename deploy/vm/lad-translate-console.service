@@ -8,6 +8,13 @@ Type=simple
 User=ladtranslate
 Group=ladtranslate
 WorkingDirectory=/opt/lad-translate
+# Three files, last one wins. session.env for LAD_CONTROL_SCHEMA and
+# LAD_TRANSLATE_TENANT - the channel map lives in the same tenant schema the
+# session writes to, and the console must not be told a different tenant than
+# the session it manages. secrets.env for LAD_DATABASE_URL. console.env last,
+# so nothing in the other two can shadow the sign-in configuration.
+EnvironmentFile=/etc/lad-translate/session.env
+EnvironmentFile=/etc/lad-translate/secrets.env
 EnvironmentFile=/etc/lad-translate/console.env
 
 # 127.0.0.1 on purpose. Caddy terminates TLS and applies basic auth in front of

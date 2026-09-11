@@ -110,23 +110,48 @@ class TenantResolver:
             schema=record.schema,
         )
 
-    async def lookup(self, tenant_id: str) -> TenantRecord:
-        cached = self._cache.get(tenant_id)
+    async def resolve_slug(self, slug: str, database_url: str) -> TenantContext:
+        """
+        The same, keyed by slug.
+
+        The SFU host is configured with a slug (LAD_TRANSLATE_TENANT=techiemaya)
+        because a human types it into session.env; ids are what services pass
+        each other. tools/serve_session.py did this lookup inline; the console
+        needs it too, and a second inline copy is one more place for the
+        `is_active` clause to go missing.
+        """
+        record = await self.lookup(slug, by="slug")
+        if not record.is_active:
+            raise SchemaError(f"tenant {slug} is not active")
+        return TenantContext(
+            tenant_id=record.tenant_id,
+            database_url=database_url,
+            schema=record.schema,
+        )
+
+    async def lookup(self, key: str, by: str = "id") -> TenantRecord:
+        if by not in ("id", "slug"):
+            raise ValueError(f"lookup by {by!r}; expected 'id' or 'slug'")
+        cache_key = f"{by}:{key}"
+        cached = self._cache.get(cache_key)
         if cached and (time.monotonic() - cached[0]) < self._ttl_s:
             return cached[1]
 
         # The control schema is validated at construction, so this
-        # interpolation is safe. tenant_id is parameterised.
+        # interpolation is safe; so is the WHERE clause, chosen from two
+        # literals above. The key itself is parameterised.
+        where = "id = $1::uuid" if by == "id" else "slug = $1"
         row = await self._pool.fetchrow(
             f"""
             SELECT id::text, slug, schema_name, is_active
             FROM {self._control_schema}.tenants
-            WHERE id = $1::uuid
+            WHERE {where}
             """,
-            tenant_id,
+            key,
         )
         if row is None:
-            raise SchemaError(f"no tenant {tenant_id} in {self._control_schema}.tenants")
+            raise SchemaError(f"no tenant {key} in {self._control_schema}.tenants")
+        tenant_id = row[0]
 
         record = TenantRecord(
             tenant_id=row[0],
@@ -137,7 +162,7 @@ class TenantResolver:
             schema=validate_schema(row[2]),
             is_active=row[3],
         )
-        self._cache[tenant_id] = (time.monotonic(), record)
+        self._cache[cache_key] = (time.monotonic(), record)
         log.info(
             "tenant resolved",
             extra={"tenant_id": tenant_id, "slug": record.slug, "schema": record.schema},
@@ -149,4 +174,7 @@ class TenantResolver:
         if tenant_id is None:
             self._cache.clear()
         else:
-            self._cache.pop(tenant_id, None)
+            self._cache.pop(f"id:{tenant_id}", None)
+            # A tenant is one row however it was looked up.
+            for key in [k for k, v in self._cache.items() if v[1].tenant_id == tenant_id]:
+                self._cache.pop(key, None)
