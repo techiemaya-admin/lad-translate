@@ -337,10 +337,25 @@
       signage.addEventListener("click", function () {
         window.open(BASE + "/api/outputs/devices/" + d.device_id + "/signage", "_blank");
       });
+      var profile = document.createElement("button");
+      profile.textContent = "Profile JSON";
+      profile.title = "The device as saved, for tools/output_agent.py at the venue";
+      profile.addEventListener("click", function () {
+        // A Blob, not a data: URI, so a 64-channel map does not become a
+        // 20 KB href; and a download, not a new tab, because the agent
+        // wants a file.
+        var blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = d.name.replace(/[^\w.-]+/g, "-").toLowerCase() + ".json";
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+      });
       var del = document.createElement("button");
       del.textContent = "Delete";
       del.addEventListener("click", function () { deleteDevice(d); });
-      actions.appendChild(edit); actions.appendChild(signage); actions.appendChild(del);
+      actions.appendChild(edit); actions.appendChild(signage);
+      actions.appendChild(profile); actions.appendChild(del);
       card.appendChild(actions);
 
       el.devices.appendChild(card);

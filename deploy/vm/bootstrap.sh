@@ -160,7 +160,7 @@ sudo -u ladtranslate env PATH="/usr/local/bin:${PATH}" bash -c "
         rm -rf .venv
     fi
     uv venv --python 3.12 --allow-existing
-    uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,stt-streaming,livekit,db,api,console]'
+    uv pip install -e '.[stt-cpu,mt-cpu,tts-cpu,stt-streaming,livekit,db,api,console,aes67]'
 "
 
 # -----------------------------------------------------------------------------

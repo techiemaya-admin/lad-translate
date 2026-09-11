@@ -47,7 +47,7 @@ jobs:
         # themselves when the models are absent, which is the point.
         run: |
           uv venv
-          uv pip install -e '.[dev]' pyjwt fastapi httpx 'uvicorn[standard]' livekit-api qrcode pillow google-auth
+          uv pip install -e '.[dev,aes67]' pyjwt fastapi httpx 'uvicorn[standard]' livekit-api qrcode pillow google-auth
 
       - name: Run
         # Chunker, stability, clause detection, drift, backpressure, latency,
