@@ -8,7 +8,14 @@ applies the session tables into that tenant's own schema.
 Usage:
     python tools/seed_tenant.py --slug techiemaya
     python tools/seed_tenant.py --slug techiemaya --schema tenant_techiemaya
+    python tools/seed_tenant.py --slug techiemaya --migrate-only
     python tools/seed_tenant.py --list
+
+--migrate-only applies pending tenant migrations to an EXISTING tenant and
+refuses to create one. It is what a deploy runs: a release that adds a table
+(002_audio_outputs.sql did) needs it in every tenant's schema before the
+service that reads it starts, but a deploy that quietly invented a tenant with
+a random id would leave two directories disagreeing about who the tenant is.
 """
 
 from __future__ import annotations
@@ -63,8 +70,16 @@ async def run(args) -> int:
         )
         if existing:
             print(f"tenant {args.slug} already exists: {existing[0]} -> {existing[1]}")
-            await migrate.apply_tenant(pool, existing[1])
+            applied = await migrate.apply_tenant(pool, existing[1])
+            print(f"migrations applied: {', '.join(applied) if applied else 'none pending'}")
             return 0
+        if args.migrate_only:
+            print(
+                f"tenant {args.slug} does not exist in {control}.tenants and "
+                "--migrate-only will not create it; seed it first without the flag",
+                file=sys.stderr,
+            )
+            return 1
 
         # --id exists so this directory can agree with the platform's on who a
         # tenant is. lad-translate keeps its OWN control schema, because
@@ -98,6 +113,8 @@ def main() -> int:
     ap.add_argument("--url", help="database URL (default: LAD_DATABASE_URL)")
     ap.add_argument("--control", help="control schema (default: LAD_CONTROL_SCHEMA)")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--migrate-only", action="store_true",
+                    help="apply pending migrations to an existing tenant; never create one")
     args = ap.parse_args()
     if not args.list and not args.slug:
         ap.error("give --slug, or --list")

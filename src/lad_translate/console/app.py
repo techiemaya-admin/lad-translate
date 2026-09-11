@@ -1,7 +1,7 @@
 """
 Operator console.
 
-Served from the VM behind Caddy's basic auth, NOT from the Cloud Run join
+Served from the VM behind Google sign-in, NOT from the Cloud Run join
 service. That service is deliberately --allow-unauthenticated, because a
 listener scans a QR code and has no credentials; a surface that can restart
 sessions and change models cannot share that door.
@@ -15,8 +15,10 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import secrets
 import urllib.parse
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -25,8 +27,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from ..db.tenancy import TenantResolver
 from ..obs.log import get_logger
-from . import auth, env, sessions
+from . import auth, env, outputs, sessions
 from .presets import BY_KEY, PRESETS
 
 log = get_logger(__name__)
@@ -54,15 +57,63 @@ def create_app(
     public_base: str,
     env_path: Path | None = None,
     auth_config: auth.Config | None = None,
+    database_url: str | None = None,
+    control_schema: str | None = None,
+    tenant: str | None = None,
+    pool=None,
 ) -> FastAPI:
     """
     `public_base` is the URL a PHONE reaches the join service on - the Cloud Run
     address, not this box. The console runs on the SFU host; the QR codes it
     prints must not point at it.
+
+    The database is optional. Without one the console still does everything it
+    did before this - presets, settings, restarts, QR codes - and the hardware
+    output panel says it is not configured rather than pretending the venue
+    owns no devices. Pass `pool` to hand one in (tests), or `database_url` to
+    have one opened in the lifespan: asyncpg binds a pool to the loop that
+    created it, and uvicorn's loop does not exist yet when this runs.
     """
-    app = FastAPI(title="LAD Live Translation - console", docs_url=None, redoc_url=None)
+    database_url = database_url or os.getenv("LAD_DATABASE_URL", "")
+    control_schema = control_schema or os.getenv("LAD_CONTROL_SCHEMA", "")
+    tenant = tenant or os.getenv("LAD_TRANSLATE_TENANT", "")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        cfg: outputs.OutputsConfig = app.state.outputs
+        owns_pool = False
+        if cfg.pool is None and database_url and control_schema:
+            from ..db.pool import create_pool
+
+            cfg.pool = await create_pool(database_url)
+            cfg.resolver = TenantResolver(cfg.pool, control_schema)
+            owns_pool = True
+            log.info(
+                "console database ready",
+                extra={"control_schema": control_schema, "tenant": tenant},
+            )
+        try:
+            yield
+        finally:
+            if owns_pool and cfg.pool is not None:
+                await cfg.pool.close()
+
+    app = FastAPI(
+        title="LAD Live Translation - console",
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
     app.state.public_base = public_base.rstrip("/")
     app.state.env_path = env_path or env.DEFAULT_PATH
+    # Built eagerly when a pool is handed in, for the same reason api/admin.py
+    # does: a test client can drive the app without ever running the lifespan.
+    app.state.outputs = outputs.OutputsConfig(
+        pool=pool,
+        resolver=TenantResolver(pool, control_schema) if pool is not None and control_schema else None,
+        tenant_slug=tenant,
+        database_url=database_url,
+    )
 
     # Everything lives under /console, and Caddy does NOT strip the prefix.
     #
@@ -346,5 +397,7 @@ def create_app(
     @app.get(f"{PREFIX}/api/whoami")
     async def whoami(request: Request):
         return {"email": getattr(request.state, "email", None)}
+
+    outputs.install(app, PREFIX)
 
     return app

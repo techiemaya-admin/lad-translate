@@ -8,6 +8,14 @@ settings straight onto the internet.
 
     LAD_TRANSLATE_PUBLIC_BASE=https://lad-translate-dev-...run.app \
     python tools/serve_console.py
+
+The hardware output panel needs the database the session writes to:
+
+    LAD_DATABASE_URL=postgresql://... LAD_CONTROL_SCHEMA=lad_translate_dev \
+    LAD_TRANSLATE_TENANT=techiemaya python tools/serve_console.py
+
+Without those three the rest of the console works and that panel says it is
+not configured - it does not pretend the venue owns no devices.
 """
 
 from __future__ import annotations

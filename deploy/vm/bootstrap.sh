@@ -299,9 +299,36 @@ else
 fi
 chown ladtranslate:ladtranslate /etc/lad-translate/session.env
 
+# -----------------------------------------------------------------------------
+log "Database"
+# -----------------------------------------------------------------------------
+# Apply pending tenant migrations before anything that reads the new tables
+# starts. Nothing at runtime migrates: the session and the console both assume
+# the schema is there, and 002_audio_outputs.sql taught us what "assume" costs
+# - a console that answered "no devices" for a table that did not exist.
+#
+# --migrate-only, so a deploy can never invent a tenant. Seeding one is a
+# decision about identity that a person makes once, with --id, so this box and
+# the platform agree on who the tenant is.
+if [[ -n "${DATABASE_URL}" ]]; then
+    TENANT_SLUG="$(grep -oP '^LAD_TRANSLATE_TENANT=\K.*' /etc/lad-translate/session.env || true)"
+    CONTROL_SCHEMA="$(grep -oP '^LAD_CONTROL_SCHEMA=\K.*' /etc/lad-translate/session.env || true)"
+    if [[ -n "${TENANT_SLUG}" ]]; then
+        sudo -u ladtranslate env \
+            LAD_DATABASE_URL="${DATABASE_URL}" LAD_CONTROL_SCHEMA="${CONTROL_SCHEMA}" \
+            "${REPO_DIR}/.venv/bin/python" "${REPO_DIR}/tools/seed_tenant.py" \
+            --slug "${TENANT_SLUG}" --migrate-only \
+            || log "WARNING: tenant migrations did not apply; the console's hardware output panel will say so"
+    else
+        log "  no LAD_TRANSLATE_TENANT in session.env; skipping tenant migrations"
+    fi
+else
+    log "  no database URL; skipping tenant migrations"
+fi
+
 systemctl daemon-reload
 systemctl enable --now livekit-server caddy lad-translate-console
-systemctl restart caddy
+systemctl restart caddy lad-translate-console
 
 # -----------------------------------------------------------------------------
 log "Verify"
@@ -327,7 +354,7 @@ Provisioned.
   SFU        wss://${LAD_TRANSLATE_SFU_HOST}   (signalling, via Caddy)
   media      UDP 50000-60000 / TCP 7881 direct to this VM's external IP
   app        ${REPO_DIR}
-  console    https://${LAD_TRANSLATE_SFU_HOST}/console   (basic auth, user "operator")
+  console    https://${LAD_TRANSLATE_SFU_HOST}/console   (Google sign-in)
   STT        CPU. Re-run deploy/vm/benchmark_stt.py after any resize.
 
 Start a talk:

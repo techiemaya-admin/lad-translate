@@ -1,9 +1,13 @@
 """
 Operator API for hardware audio output.
 
-Device profiles and channel maps, read and written by the portal in
-LAD-Frontend. This service owns the data and the invariants; the portal owns
-the interface and the per-user authorisation.
+Device profiles and channel maps. This service owns the data and the
+invariants. Two front doors share the five operations below:
+
+  - this app, for a portal (LAD-Frontend) speaking service-to-service with a
+    bearer token and an explicit X-Tenant-Id;
+  - console/outputs.py, for the operator console on the SFU host, behind
+    Google sign-in and fixed to the tenant the box serves.
 
     GET     /api/admin/outputs/devices              every device for a tenant
     POST    /api/admin/outputs/devices              create one, id assigned here
@@ -176,6 +180,67 @@ async def store_for(
     return OutputStore(state.pool, tenant)
 
 
+# --- the five operations ---------------------------------------------------
+#
+# Module level and framework-agnostic in everything but the HTTPException they
+# raise, so that the operator console can mount them behind Google sign-in and
+# a fixed tenant while this app mounts them behind a bearer token and
+# X-Tenant-Id. One implementation of "PUT edits, it does not create" rather
+# than two that drift.
+
+
+async def devices_list(store: OutputStore) -> dict:
+    devices = await store.list_devices()
+    return {"devices": [_device_json(d) for d in devices]}
+
+
+async def device_create(store: OutputStore, body: DeviceBody) -> dict:
+    # Empty device_id means OutputStore assigns one.
+    try:
+        saved = await store.save_device(_to_device(body, ""))
+    except DuplicateDeviceName as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _device_json(saved)
+
+
+async def device_get(store: OutputStore, device_id: str) -> dict:
+    device = await store.get_device(device_id)
+    if device is None:
+        raise HTTPException(404, "no such device for this tenant")
+    return _device_json(device)
+
+
+async def device_replace(store: OutputStore, device_id: str, body: DeviceBody) -> dict:
+    """
+    Replace an existing device and its entire channel map.
+
+    PUT rather than PATCH because the portal sends the patch the operator
+    drew, not the moves they made to draw it. A dropped request then leaves
+    the previous map intact instead of a half-repatched rig, and freeing a
+    channel and reusing it in one edit does not collide with itself.
+
+    It edits and does not create, so creation stays on POST. Every tenant
+    has its own schema, so a PUT carrying an id this tenant does not own
+    would otherwise write a perfectly valid device into their schema and
+    answer 200 -- no leak, but a phantom rig conjured out of a stale id or
+    a typo, which an operator then has to find and delete.
+    """
+    if await store.get_device(device_id) is None:
+        raise HTTPException(404, "no such device for this tenant")
+    try:
+        saved = await store.save_device(_to_device(body, device_id))
+    except DuplicateDeviceName as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _device_json(saved)
+
+
+async def device_delete(store: OutputStore, device_id: str) -> None:
+    if not await store.delete_device(device_id):
+        raise HTTPException(404, "no such device for this tenant")
+
+
 def create_admin_app(
     pool=None,
     control_schema: str | None = None,
@@ -239,24 +304,15 @@ def create_admin_app(
 
     @app.get("/api/admin/outputs/devices")
     async def list_devices(store: Annotated[OutputStore, Depends(store_for)]):
-        devices = await store.list_devices()
-        return {"devices": [_device_json(d) for d in devices]}
+        return await devices_list(store)
 
     @app.post("/api/admin/outputs/devices", status_code=201)
     async def create_device(body: DeviceBody, store: Annotated[OutputStore, Depends(store_for)]):
-        # Empty device_id means OutputStore assigns one.
-        try:
-            saved = await store.save_device(_to_device(body, ""))
-        except DuplicateDeviceName as exc:
-            raise HTTPException(409, str(exc)) from exc
-        return _device_json(saved)
+        return await device_create(store, body)
 
     @app.get("/api/admin/outputs/devices/{device_id}")
     async def get_device(device_id: str, store: Annotated[OutputStore, Depends(store_for)]):
-        device = await store.get_device(device_id)
-        if device is None:
-            raise HTTPException(404, "no such device for this tenant")
-        return _device_json(device)
+        return await device_get(store, device_id)
 
     @app.put("/api/admin/outputs/devices/{device_id}")
     async def replace_device(
@@ -264,33 +320,10 @@ def create_admin_app(
         body: DeviceBody,
         store: Annotated[OutputStore, Depends(store_for)],
     ):
-        """
-        Replace an existing device and its entire channel map.
-
-        PUT rather than PATCH because the portal sends the patch the operator
-        drew, not the moves they made to draw it. A dropped request then leaves
-        the previous map intact instead of a half-repatched rig, and freeing a
-        channel and reusing it in one edit does not collide with itself.
-
-        It edits and does not create, so creation stays on POST. Every tenant
-        has its own schema, so a PUT carrying an id this tenant does not own
-        would otherwise write a perfectly valid device into their schema and
-        answer 200 -- no leak, but a phantom rig conjured out of a stale id or
-        a typo, which an operator then has to find and delete.
-        """
-        if await store.get_device(device_id) is None:
-            raise HTTPException(404, "no such device for this tenant")
-        try:
-            saved = await store.save_device(_to_device(body, device_id))
-        except DuplicateDeviceName as exc:
-            raise HTTPException(409, str(exc)) from exc
-        except LookupError as exc:
-            raise HTTPException(404, str(exc)) from exc
-        return _device_json(saved)
+        return await device_replace(store, device_id, body)
 
     @app.delete("/api/admin/outputs/devices/{device_id}", status_code=204)
     async def delete_device(device_id: str, store: Annotated[OutputStore, Depends(store_for)]):
-        if not await store.delete_device(device_id):
-            raise HTTPException(404, "no such device for this tenant")
+        await device_delete(store, device_id)
 
     return app
