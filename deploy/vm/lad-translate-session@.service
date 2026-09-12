@@ -34,14 +34,22 @@ ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
     --model ${LAD_TRANSLATE_STT_MODEL} \
     --stt ${STT_BACKEND} \
     --lookahead ${LAD_TRANSLATE_LOOKAHEAD} \
-    ${LAD_TRANSLATE_VAD_FLAG} \
+    $LAD_TRANSLATE_VAD_FLAG \
     --device ${LAD_TRANSLATE_STT_DEVICE} \
     --cpu-threads ${LAD_TRANSLATE_STT_THREADS} \
     --emit-interval ${LAD_TRANSLATE_EMIT_INTERVAL} \
     --window ${LAD_TRANSLATE_WINDOW} \
     --wait ${LAD_TRANSLATE_WAIT} \
     --record-dir /var/lib/ladtranslate/recordings \
-    ${LAD_TRANSLATE_RECORD_FLAG}
+    $LAD_TRANSLATE_RECORD_FLAG
+
+# $VAR, NOT ${VAR}, for the two optional flags above. systemd substitutes
+# ${VAR} as exactly one argument, so an empty value becomes an empty string
+# argument and argparse exits 2 with "unrecognized arguments:" and nothing
+# after it. $VAR word-splits and an empty value produces no argument at all,
+# which is what an optional flag needs. LAD_TRANSLATE_RECORD_FLAG is empty
+# whenever recording is off, so this crash-looped the session the moment the
+# recording release landed - on a box where every other check was green.
 
 # Deliberately NOT Restart=always. The tool exits when the talk ends or the
 # idle cap is reached, and that is success. Restarting would open a fresh
