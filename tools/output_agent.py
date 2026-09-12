@@ -83,6 +83,7 @@ import json
 import signal
 import ssl
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -132,6 +133,48 @@ def _ssl_context(insecure: bool) -> ssl.SSLContext:
     return ctx
 
 
+class NoLiveSession(Exception):
+    """The room exists as a name but nothing is running in it right now."""
+
+
+class SingleDrain:
+    """
+    One running task, replaced rather than added to.
+
+    A session restart republishes every language track, the room
+    re-subscribes, and the subscribe handler fires again. Starting another
+    drain there leaves the previous one running into the same ring, so the
+    sink receives N copies of every phrase. Five copies, staggered by five
+    restarts, is audio that does not stop when the speaker does - measured
+    on a Mac feeding Dante Virtual Soundcard, where the relay channel also
+    sat permanently two seconds behind, because two streams were filling a
+    buffer that drains at one.
+    """
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task | None = None
+        self.replaced = 0
+
+    @property
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    def replace(self, coro) -> asyncio.Task:
+        """Cancel whatever is running and start this instead."""
+        if self.running:
+            self.replaced += 1
+            self.task.cancel()
+        self.task = asyncio.ensure_future(coro)
+        return self.task
+
+    async def stop(self) -> None:
+        if self.task is not None:
+            self.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self.task
+            self.task = None
+
+
 def join(base: str, room: str, language: str, ctx: ssl.SSLContext) -> dict:
     """Ask the join API for a listener token, exactly as the browser page does."""
     req = urllib.request.Request(
@@ -140,8 +183,50 @@ def join(base: str, room: str, language: str, ctx: ssl.SSLContext) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # "no live session in room" - the session ended, or has not been
+            # started yet. Either is ordinary at a venue: the agent is often
+            # switched on before the operator presses APPLY.
+            raise NoLiveSession(room) from exc
+        raise
+
+
+async def wait_for_room(base: str, room: str, ctx: ssl.SSLContext, stop: asyncio.Event) -> bool:
+    """
+    Block until the room has a live session, or stop is set.
+
+    Polls every few seconds and logs once a minute, so the operator sees
+    "waiting for dubai-demo" rather than a stack trace, and the agent is
+    already attached the moment the session comes up.
+    """
+    attempts = 0
+    while not stop.is_set():
+        try:
+            req = urllib.request.Request(f"{base}/api/rooms/{room}")
+            with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+                info = json.load(response)
+            if info.get("status") in ("starting", "live"):
+                return True
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+        except (urllib.error.URLError, TimeoutError) as exc:
+            log.warning("join service unreachable; retrying", extra={"error": str(exc)[:120]})
+        if attempts % 12 == 0:
+            log.info(
+                "waiting for a live session in the room",
+                extra={"room": room, "hint": "start it from the console's deck (APPLY)"},
+            )
+        attempts += 1
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=5.0)
+        except TimeoutError:
+            continue
+    return False
 
 
 def leave(base: str, listener_id: str, session_id: str, ctx: ssl.SSLContext) -> None:
@@ -160,7 +245,7 @@ async def listen(language: str, grant: dict, sink, stop: asyncio.Event) -> None:
 
     room = rtc.Room()
     want_name = grant["track_name"]
-    drains: set[asyncio.Task] = set()
+    drain = SingleDrain()   # one stream per language; see the class
 
     def want(publication) -> None:
         if publication.name == want_name and not publication.subscribed:
@@ -174,20 +259,23 @@ async def listen(language: str, grant: dict, sink, stop: asyncio.Event) -> None:
     def _on_subscribed(track, publication, participant):
         if publication.name != want_name:
             return
-        log.info("language track attached", extra={"language": language, "track": want_name})
+        log.info(
+            "language track re-attached; dropping the previous stream" if drain.running
+            else "language track attached",
+            extra={"language": language, "track": want_name},
+        )
 
-        async def drain() -> None:
+        async def pump() -> None:
             stream = rtc.AudioStream.from_track(track=track)
             try:
                 async for event in stream:
                     frame = event.frame
                     await sink.push(language, bytes(frame.data), frame.sample_rate)
             finally:
-                await stream.aclose()
+                with contextlib.suppress(Exception):
+                    await stream.aclose()
 
-        task = asyncio.create_task(drain())
-        drains.add(task)
-        task.add_done_callback(drains.discard)
+        drain.replace(pump())
 
     await room.connect(grant["url"], grant["token"], rtc.RoomOptions(auto_subscribe=False))
     for participant in room.remote_participants.values():
@@ -196,8 +284,7 @@ async def listen(language: str, grant: dict, sink, stop: asyncio.Event) -> None:
     log.info("joined room for a language", extra={"language": language, "url": grant["url"]})
 
     await stop.wait()
-    for task in list(drains):
-        task.cancel()
+    await drain.stop()
     await room.disconnect()
 
 
@@ -296,8 +383,17 @@ async def main() -> int:
     grants: dict[str, dict] = {}
     try:
         await sink.publish_languages(languages)
+        # The card is open and playing silence from here; the room may take
+        # a while. A session that ends mid-run is handled the same way: the
+        # listeners drop, and we go back to waiting rather than exiting.
+        if not await wait_for_room(args.base, args.room, ctx, stop):
+            return 0
         for lang in languages:
-            grants[lang] = join(args.base, args.room, lang, ctx)
+            try:
+                grants[lang] = join(args.base, args.room, lang, ctx)
+            except NoLiveSession:
+                log.error("the session ended while joining; start it again and rerun", extra={"room": args.room})
+                return 1
         if engine == "aes67":
             for flow in sink.flows:
                 log.info("flow", extra=flow)
