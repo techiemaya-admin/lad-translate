@@ -30,7 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..db.tenancy import TenantResolver
 from ..obs.log import get_logger
-from . import auth, env, outputs, recordings, sessions
+from . import auth, env, outputs, recordings, sessions, transcript
 from .presets import BY_KEY, PRESETS
 
 log = get_logger(__name__)
@@ -512,5 +512,6 @@ def create_app(
         return {"email": getattr(request.state, "email", None)}
 
     outputs.install(app, PREFIX)
+    transcript.install(app, PREFIX)
 
     return app

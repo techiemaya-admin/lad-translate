@@ -37,6 +37,7 @@ to a room yet.
 | AES67 output (`session/aes67.py`, `tools/output_agent.py`) | Done, 17 tests against a loopback receiver; **not yet against a Dante device** |
 | Local card output (`session/localcard.py`) — Dante Virtual Soundcard, CoreAudio, ASIO, ALSA | Done, 17 tests; **verified into a real DVS**, not yet through to a Dante receiver |
 | Session recording (`session/recording.py`, console REC) | Done, 33 tests; aligned WAVs, disclosed on the speaker and listener pages |
+| Live transcript (`console/transcript.py`) | Done, 8 tests; source and every language with per-language latency |
 | Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
 ## Measured on the dev Mac
