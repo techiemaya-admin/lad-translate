@@ -37,6 +37,7 @@ to a room yet.
 | AES67 output (`session/aes67.py`, `tools/output_agent.py`) | Done, 17 tests against a loopback receiver; **not yet against a Dante device** |
 | Local card output (`session/localcard.py`) — Dante Virtual Soundcard, CoreAudio, ASIO, ALSA | Done, 17 tests; **verified into a real DVS**, not yet through to a Dante receiver |
 | Session recording (`session/recording.py`, console REC) | Done, 33 tests; aligned WAVs, disclosed on the speaker and listener pages |
+| Live transcript (`console/transcript.py`) | Done, 8 tests; source and every language with per-language latency |
 | Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
 ## Measured on the dev Mac
@@ -1490,6 +1491,39 @@ it.
 the maximum across sinks. Handsets drifting while WebRTC is healthy is still an
 audience out of sync; summing would double-count one phrase and make
 `session/drift.py` skip far too eagerly.
+
+## The live transcript
+
+The console's Transcript panel shows what the speaker said and what went out
+in each language, as it happens, with the latency each one achieved.
+
+    0:05  Good morning everyone, and thank you for joining us today.
+          AR   صباح الخير للجميع، وشكرًا لانضمامكم إلينا اليوم.       1.36s
+          DE   Guten Morgen allerseits, und danke, dass Sie heute dabei sind.   1.23s
+          FR   Bonjour à tous, et merci de nous rejoindre aujourd'hui.          1.21s
+
+It exists because the status tiles cannot tell you the words are wrong. A
+session with zero drops and a good p50 was, on one occasion here, returning
+Quranic exegesis in Arabic - found only because someone read the output. So:
+read the first minute of any new room in this panel.
+
+**Read from the database, not the journal.** The session already writes a row
+per chunk per language - source, translation, latency - and the console
+already holds a pool for the hardware output panel. The journal carries no
+text, and a talk's content does not belong in the system log.
+
+**Polled with a high-water mark.** The page sends the highest chunk id it
+holds and gets only what is newer. A forty-minute keynote is thousands of
+rows; re-sending them every two seconds to redraw a panel nobody scrolled is
+how a console becomes the reason the box is busy. The panel keeps the last
+300 lines in the DOM for the same reason.
+
+A language that produced nothing for a chunk is shown as a line saying so,
+not omitted: a phrase that reached three languages and not the fourth is
+exactly what an operator needs to see. Latencies over 5s are amber. RTL text
+is isolated to its own column so the language codes and latencies stay in
+line down the page. **Follow** sticks to the newest line unless you scroll
+up; **Copy all** takes the visible transcript to the clipboard.
 
 ## Recording a session
 

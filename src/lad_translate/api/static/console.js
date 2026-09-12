@@ -52,6 +52,11 @@
     deckRec: $("deck-rec"),
     ledRec: $("led-rec"),
     takes: $("takes"),
+    trLines: $("tr-lines"),
+    trPill: $("tr-pill"),
+    trState: $("tr-state"),
+    trFollow: $("tr-follow"),
+    trCopy: $("tr-copy"),
     recPill: $("recordings-pill"),
     recDisk: $("recordings-disk"),
     advanced: $("advanced-fields"),
@@ -395,6 +400,133 @@
     // A take that just ended is a new file to list.
     if (recordingWas === true && !rec) loadRecordings();
     recordingWas = rec;
+  }
+
+  // --- live transcript ------------------------------------------------------------
+  //
+  // Polled on its own timer with a high-water mark: the page sends the
+  // highest chunk it holds and gets only what is newer. A forty-minute
+  // keynote is thousands of rows and re-sending them every two seconds to
+  // redraw a panel nobody scrolled is how a console becomes the reason the
+  // box is busy.
+
+  var RTL = { ar: 1, he: 1, fa: 1, ur: 1 };
+  var trAfter = -1;
+  var trSession = null;
+  var trTimer = null;
+  var trSeen = 0;
+
+  function trReset() {
+    trAfter = -1;
+    trSession = null;
+    trSeen = 0;
+    el.trLines.innerHTML = "";
+  }
+
+  function atBottom() {
+    var box = el.trLines;
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  }
+
+  function renderChunk(c) {
+    var line = h("div", "tr-line");
+    line.dataset.chunk = c.chunk_id;
+
+    var src = h("div", "tr-src");
+    src.appendChild(h("span", "tr-at", fmtSeconds(c.t_audio_end)));
+    src.appendChild(h("span", "tr-text", c.source));
+    line.appendChild(src);
+
+    var targets = h("div", "tr-targets");
+    Object.keys(c.languages).sort().forEach(function (code) {
+      var t = c.languages[code];
+      var row = h("div", "tr-target");
+      row.appendChild(h("span", "tr-code", code));
+      if (t.text) {
+        var text = h("span", "tr-text", t.text);
+        // dir on the TEXT, not the row: Arabic renders right-to-left while
+        // the code and the latency stay in the same columns as every other
+        // language, which is what makes a wall of them scannable.
+        if (RTL[code]) text.setAttribute("dir", "rtl");
+        row.appendChild(text);
+      } else {
+        // A chunk that reached three languages and not the fourth is
+        // exactly what an operator needs to see, so it is a line, not a gap.
+        row.appendChild(h("span", "tr-text tr-missing", "— no translation"));
+      }
+      if (t.latency_s !== null && t.latency_s !== undefined) {
+        var lat = h("span", "tr-lat" + (t.latency_s > 5 ? " slow" : ""), t.latency_s.toFixed(2) + "s");
+        row.appendChild(lat);
+      }
+      targets.appendChild(row);
+    });
+    line.appendChild(targets);
+    return line;
+  }
+
+  function loadTranscript() {
+    if (!room()) return;
+    return api(BASE + "/api/transcript?room=" + encodeURIComponent(room()) + "&after=" + trAfter)
+      .then(function (t) {
+        // A different session means a restart: start the panel again rather
+        // than appending this talk to the last one.
+        if (t.session_id && trSession && t.session_id !== trSession) trReset();
+        trSession = t.session_id;
+
+        if (t.reason) {
+          el.trState.textContent = t.reason;
+          el.trState.hidden = false;
+        } else {
+          el.trState.hidden = true;
+        }
+
+        var stick = el.trFollow.checked && atBottom();
+        t.chunks.forEach(function (c) {
+          el.trLines.appendChild(renderChunk(c));
+          if (c.chunk_id > trAfter) trAfter = c.chunk_id;
+          trSeen++;
+        });
+        // Keep the DOM bounded; the tail is what anyone reads.
+        while (el.trLines.children.length > 300) el.trLines.removeChild(el.trLines.firstChild);
+
+        if (t.chunks.length && stick) el.trLines.scrollTop = el.trLines.scrollHeight;
+
+        el.trPill.textContent = trSeen ? trSeen + " phrase" + (trSeen === 1 ? "" : "s") : "nothing yet";
+        el.trPill.className = "pill " + (t.status === "live" ? "on" : (trSeen ? "" : "warn"));
+        if (!trSeen && !t.reason) {
+          el.trState.textContent = t.status === "live"
+            ? "Session is live and nothing has been said yet."
+            : "The last session in this room produced no transcript.";
+          el.trState.hidden = false;
+        }
+      })
+      .catch(function (err) {
+        el.trPill.textContent = "unavailable";
+        el.trPill.className = "pill off";
+        el.trState.textContent = err.message;
+        el.trState.hidden = false;
+      });
+  }
+
+  function copyTranscript() {
+    var out = [];
+    Array.prototype.forEach.call(el.trLines.children, function (line) {
+      var at = line.querySelector(".tr-at").textContent;
+      out.push(at + "  " + line.querySelector(".tr-src .tr-text").textContent);
+      Array.prototype.forEach.call(line.querySelectorAll(".tr-target"), function (t) {
+        out.push("      " + t.querySelector(".tr-code").textContent + "  " +
+                 t.querySelector(".tr-text").textContent);
+      });
+    });
+    var text = out.join("\n");
+    if (!text) { toast("Nothing to copy yet."); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { toast("Transcript copied.", "ok"); },
+        function () { toast("Could not copy.", true); });
+    } else {
+      toast("Copying is not available in this browser.", true);
+    }
   }
 
   // --- recordings ---------------------------------------------------------------
@@ -993,7 +1125,10 @@
   el.faderEmit.addEventListener("input", onFaderInput);
   el.faderWindow.addEventListener("input", onFaderInput);
   el.faderReset.addEventListener("click", fadersFollowArmed);
-  el.room.addEventListener("change", function () { refreshQr(); refreshStatus(); loadRecordings(); });
+  el.room.addEventListener("change", function () {
+    refreshQr(); refreshStatus(); loadRecordings(); trReset(); loadTranscript();
+  });
+  el.trCopy.addEventListener("click", copyTranscript);
   el.addDevice.addEventListener("click", function () { openEditor(null); });
   el.cancelDevice.addEventListener("click", closeEditor);
   el.cancelDeviceX.addEventListener("click", closeEditor);
@@ -1013,7 +1148,13 @@
   load().then(refreshStatus).catch(function (err) { toast(err.message, true); });
   loadOutputs();
   loadRecordings();
+  loadTranscript();
   watchSections();
   timer = setInterval(refreshStatus, 5000);
-  window.addEventListener("beforeunload", function () { clearInterval(timer); });
+  // Faster than the status poll: a phrase the operator is reading along with
+  // is worth two seconds, and the query is bounded by the high-water mark.
+  trTimer = setInterval(loadTranscript, 2000);
+  window.addEventListener("beforeunload", function () {
+    clearInterval(timer); clearInterval(trTimer);
+  });
 })();

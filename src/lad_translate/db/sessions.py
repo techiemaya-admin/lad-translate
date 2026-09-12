@@ -304,6 +304,54 @@ class SessionStore:
             row.revised,
         )
 
+    async def newest_session_in_room(self, room: str) -> dict | None:
+        """
+        The session the console is looking at: the live one, else the last.
+
+        Falls back to the most recent ended session on purpose. An operator
+        who stops a talk and then opens the transcript wants what was just
+        said, not an empty panel.
+        """
+        row = await self._pool.fetchrow(
+            f"""
+            SELECT session_id::text, event_name, status, started_at, target_languages
+              FROM {self._schema}.translation_sessions
+             WHERE tenant_id = $1::uuid AND room_name = $2
+             ORDER BY (status IN ('starting', 'live')) DESC, started_at DESC
+             LIMIT 1
+            """,
+            self.tenant_id,
+            room,
+        )
+        return dict(row) if row else None
+
+    async def recent_transcript(
+        self, session_id: str, after_chunk_id: int = -1, limit: int = 200
+    ) -> list:
+        """
+        Every language's line for the chunks after `after_chunk_id`.
+
+        Keyed by chunk so the caller can put the source and its translations
+        on one row. The limit counts ROWS, not chunks, and the newest chunks
+        are the ones kept: a console polling every two seconds wants the tail,
+        and a talk that has run for an hour must not return all of it.
+        """
+        rows = await self._pool.fetch(
+            f"""
+            SELECT chunk_id, language, source_text, translated_text,
+                   t_audio_start, t_audio_end, latency_s
+              FROM {self._schema}.session_transcripts
+             WHERE tenant_id = $1::uuid AND session_id = $2::uuid AND chunk_id > $3
+             ORDER BY chunk_id DESC, language
+             LIMIT $4
+            """,
+            self.tenant_id,
+            session_id,
+            after_chunk_id,
+            limit,
+        )
+        return list(reversed(rows))
+
     async def transcript(self, session_id: str, language: str) -> list:
         return await self._pool.fetch(
             f"""

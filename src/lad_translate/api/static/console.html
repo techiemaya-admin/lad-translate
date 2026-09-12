@@ -22,6 +22,9 @@
         <a href="#overview" class="nav-link active" data-section="overview">
           <span class="nav-icon" aria-hidden="true">◉</span> Overview
         </a>
+        <a href="#transcript" class="nav-link" data-section="transcript">
+          <span class="nav-icon" aria-hidden="true">❝</span> Transcript
+        </a>
         <a href="#presets" class="nav-link" data-section="presets">
           <span class="nav-icon" aria-hidden="true">⚙</span> Presets
         </a>
@@ -89,6 +92,26 @@
           <div class="kpis" id="kpis"></div>
 
           <p class="alert" id="status-note" hidden></p>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="transcript" data-title="Transcript">
+          <div class="card-head">
+            <div>
+              <h2>Live transcript <span id="tr-pill" class="pill">…</span></h2>
+              <p class="muted">
+                What the speaker said and what went out in each language, as it
+                happens. The tiles say a session is healthy; only this says the
+                words are right — read the first minute of any new room here.
+              </p>
+            </div>
+            <div class="actions">
+              <label class="check follow"><input id="tr-follow" type="checkbox" checked> Follow</label>
+              <button id="tr-copy" class="ghost small">Copy all</button>
+            </div>
+          </div>
+          <p class="alert warn" id="tr-state" hidden></p>
+          <div id="tr-lines" class="transcript"></div>
         </section>
 
         <!-- ============================================================ -->
