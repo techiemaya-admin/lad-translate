@@ -354,6 +354,10 @@ async def test_the_dropdown_says_which_kinds_route_audio(env_file: Path):
 
     assert [k["key"] for k in kinds] == list(DEVICE_KINDS)
     built = {k["key"] for k in kinds if k["built"]}
-    assert built == set(KINDS_WITH_AN_ENGINE) == {"aes67"}
+    assert built == set(KINDS_WITH_AN_ENGINE) == set(DEVICE_KINDS)
     for k in kinds:
         assert (k["engine"] is not None) == k["built"]
+    # The distinction an operator with DVS needs is in the tooltip text.
+    by_key = {k["key"]: k["engine"] for k in kinds}
+    assert "not by DVS" in by_key["aes67"]
+    assert "Dante Virtual Soundcard" in by_key["dante-vsc"]

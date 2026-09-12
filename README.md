@@ -35,6 +35,7 @@ to a room yet.
 | Hardware output config and operator API (`api/admin.py`, `db/outputs.py`) | Done, 48 tests |
 | Audio sink interface (`session/sinks.py`) | Done, 10 tests |
 | AES67 output (`session/aes67.py`, `tools/output_agent.py`) | Done, 17 tests against a loopback receiver; **not yet against a Dante device** |
+| Local card output (`session/localcard.py`) — Dante Virtual Soundcard, CoreAudio, ASIO, ALSA | Done, 17 tests; **verified into a real DVS**, not yet through to a Dante receiver |
 | Session recording (`session/recording.py`, console REC) | Done, 33 tests; aligned WAVs, disclosed on the speaker and listener pages |
 | Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
@@ -1432,9 +1433,37 @@ socket. What is not tested is whether a Dante device in AES67 mode accepts
 the flow: that needs a Dante device, a PTP grandmaster and a room. The first
 time it meets one, expect to adjust the SDP - Dante is particular about it.
 
-The other kinds in the dropdown - `dante-vsc`, `coreaudio`, `asio`, `alsa` -
-are stored for a future local-card agent and route nothing. The console says
-so under the field.
+### A sound card on the agent's machine - Dante Virtual Soundcard
+
+**Dante Virtual Soundcard does not receive AES67.** Per Audinate, DVS and
+Dante Via support Dante flows only, so a venue running DVS on a Mac or PC
+needs the audio played *into* DVS as a sound card; DVS then transmits it on
+the Dante network like any other device, and the IR transmitter's inputs
+subscribe to this machine's channels in Dante Controller.
+
+`session/localcard.py` is that sink, through PortAudio, which is why one
+engine covers the other four kinds: `dante-vsc`, `coreaudio`, `asio` and
+`alsa` are all "a card this machine can see". The stream is opened as wide
+as the highest patched channel; the card's callback drains a ring per
+channel every 10 ms, silence where nothing is patched. The profile's
+`device_name` is matched forgivingly ("Dante Virtual Sound card" finds
+"Dante Virtual Soundcard"), and an ambiguous name is refused rather than
+guessed - the wrong card at a venue is the wrong room hearing French.
+
+```bash
+python tools/output_agent.py --list-devices          # what this machine can play to
+python tools/output_agent.py --base https://lad-translate-dev-...run.app \
+    --room dubai-demo --profile mac-avc.json         # kind dante-vsc -> the card engine
+```
+
+**Verified on a Mac with DVS 64x64 at 48 kHz**, against the live room:
+the agent opened DVS by name, joined for fr/ar/de/en, and played real
+translations at exactly 48,000 frames/s with zero underruns over a 40 s run.
+**Not verified:** a Dante receiver subscribed to DVS's transmit channels -
+that needs Dante Controller and a device on the network.
+
+Against AES67 the trade is: no PTP, no multicast; but the output host must
+be a Mac or PC with DVS licensed. Pick by what the venue owns.
 
 ### What a hardware sink has to do that the LiveKit one does not
 

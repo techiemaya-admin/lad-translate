@@ -1,26 +1,59 @@
 #!/usr/bin/env python3
 """
-The venue's output agent: translated audio from the room, out as AES67.
+The venue's output agent: translated audio from the room, out to the rig.
 
-Runs on a box on the venue's audio network - a Linux NUC or a Raspberry Pi in
-the rack is enough - and does what a phone does, N times over: joins the room
-as a listener for each language the channel map names, and instead of playing
-what it hears, writes it into the AES67 flows the profile describes. The IR
-transmitter's Dante inputs subscribe to those flows in Dante Controller.
+Runs on a machine at the venue and does what a phone does, N times over:
+joins the room as a listener for each language the channel map names, and
+instead of playing what it hears, hands it to one of two engines. Which one
+is the profile's Kind:
 
-It sits at the venue because AES67 is multicast on the local network and the
-pipeline is in a cloud region. It reuses the listener path because the
+    aes67                          RTP multicast on the Dante/AES67 network
+                                   (session/aes67.py). Any Linux box on the
+                                   VLAN; needs linuxptp; received by Dante
+                                   HARDWARE with AES67 mode on.
+    dante-vsc / coreaudio / asio / alsa
+                                   a sound card THIS machine can see
+                                   (session/localcard.py). Dante Virtual
+                                   Soundcard on a Mac or PC is the usual one:
+                                   the agent plays each language into DVS's
+                                   channels and DVS puts them on the Dante
+                                   network as a transmitter.
+
+Dante Virtual Soundcard does not receive AES67, so a venue running DVS wants
+the second. A rack box with no sound card wants the first.
+
+It sits at the venue because both engines need the venue's audio network and
+the pipeline is in a cloud region. It reuses the listener path because the
 listener path is the one that is proven: if a phone can hear a language, so
 can this.
 
+    # a Mac with Dante Virtual Soundcard, profile Kind dante-vsc
+    python tools/output_agent.py --base https://lad-translate-dev-...run.app \\
+        --room dubai-demo --profile mac-avc.json
+
+    # a Linux box on the Dante VLAN, profile Kind aes67
     python tools/output_agent.py --base https://lad-translate-dev-...run.app \\
         --room dubai-demo --profile main-hall.json \\
         --interface 192.168.10.5 --ptp-grandmaster 00-1d-c1-ff-fe-12-34-56
 
-The profile is the device as the console saved it: open the device's page in
-the console and use "Profile JSON", or GET /console/api/outputs/devices/<id>.
+    # what this machine can play to, for the profile's "Host audio device"
+    python tools/output_agent.py --list-devices
 
-HOST CHECKLIST, in the order things go wrong:
+The profile is the device as the console saved it: "Profile JSON" on the
+device's card, or GET /console/api/outputs/devices/<id>.
+
+HOST CHECKLIST for a sound card (dante-vsc and friends):
+
+  1. DVS is installed, licensed and running, and Dante Controller shows this
+     machine as a device on the network. --list-devices must show it.
+  2. The profile's sample rate matches DVS's (Dante Controller > Device Config
+     > Sample Rate; 48000 unless someone changed it). A mismatch is refused at
+     open rather than played at the wrong pitch.
+  3. In Dante Controller, subscribe the IR transmitter's inputs to this
+     machine's transmit channels 1..N - the same numbers as the channel map.
+  4. Nothing else has the device open exclusively (some DAWs do).
+
+HOST CHECKLIST for AES67, in the order things go wrong:
 
   1. The box is on the Dante VLAN, on a cabled port. --interface names that
      port's address, or multicast leaves on the wrong NIC and nobody sees it.
@@ -59,6 +92,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from lad_translate.config import OutputChannel, OutputDevice
 from lad_translate.obs.log import configure, get_logger
 from lad_translate.session.aes67 import Aes67Config, Aes67Sink
+from lad_translate.session.localcard import LocalCardConfig, LocalCardSink, list_output_devices
+
+CARD_KINDS = ("dante-vsc", "coreaudio", "asio", "alsa")
 
 log = get_logger("output_agent")
 
@@ -118,7 +154,7 @@ def leave(base: str, listener_id: str, session_id: str, ctx: ssl.SSLContext) -> 
         urllib.request.urlopen(req, context=ctx, timeout=10).close()
 
 
-async def listen(language: str, grant: dict, sink: Aes67Sink, stop: asyncio.Event) -> None:
+async def listen(language: str, grant: dict, sink, stop: asyncio.Event) -> None:
     """One room connection, one language track, straight into the sink."""
     import livekit.rtc as rtc
 
@@ -165,20 +201,25 @@ async def listen(language: str, grant: dict, sink: Aes67Sink, stop: asyncio.Even
     await room.disconnect()
 
 
-async def status_forever(sink: Aes67Sink, languages: list[str], every: float = 10.0) -> None:
+async def status_forever(sink, languages: list[str], every: float = 10.0) -> None:
     while True:
         await asyncio.sleep(every)
         depths = {lang: round(sink.queue_depth(lang), 2) for lang in languages}
-        log.info("aes67 agent", extra={"buffered_s": depths, **sink.stats.as_dict()})
+        log.info("output agent", extra={"buffered_s": depths, **sink.stats.as_dict()})
 
 
 async def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--base", required=True, help="join service base URL (the Cloud Run address)")
-    ap.add_argument("--room", required=True)
-    ap.add_argument("--profile", type=Path, required=True, help="device JSON from the console")
+    ap.add_argument("--base", help="join service base URL (the Cloud Run address)")
+    ap.add_argument("--room")
+    ap.add_argument("--profile", type=Path, help="device JSON from the console")
+    ap.add_argument("--engine", choices=("auto", "aes67", "card"), default="auto",
+                    help="auto picks from the profile's kind")
+    ap.add_argument("--device", help="override the profile's host audio device (card engine)")
+    ap.add_argument("--list-devices", action="store_true",
+                    help="print this machine's audio output devices and exit")
     ap.add_argument("--interface", default="0.0.0.0", help="IP of the NIC on the Dante network")
     ap.add_argument("--multicast", default="239.69.1.1", help="first flow's group")
     ap.add_argument("--port", type=int, default=5004)
@@ -190,29 +231,61 @@ async def main() -> int:
     args = ap.parse_args()
 
     configure(args.log_level)
+
+    if args.list_devices:
+        devices = list_output_devices()
+        if not devices:
+            print("  no audio output devices on this machine")
+            return 1
+        print("  this machine can play to:")
+        for d in devices:
+            print(f"    {d.name!r:44s} {d.max_output_channels:3d} ch  {int(d.default_samplerate)} Hz  ({d.hostapi})")
+        print('  put the name in the profile\'s "Host audio device" - matching is forgiving.')
+        return 0
+
+    if not (args.base and args.room and args.profile):
+        ap.error("--base, --room and --profile are required (or --list-devices)")
+
     device = load_profile(args.profile)
     languages = sorted({c.language for c in device.channels if c.enabled})
     if not languages:
         log.error("the profile maps no languages; nothing to do", extra={"device": device.name})
         return 1
-    if args.ptp_grandmaster == "00-00-00-00-00-00-00-00":
-        log.warning(
-            "no --ptp-grandmaster given; Dante receivers will show a clock warning "
-            "until the host runs linuxptp and this names its grandmaster"
+    if not device.enabled:
+        log.error(
+            "the profile is disabled; tick 'Device enabled' in the console and export it again",
+            extra={"device": device.name},
         )
+        return 1
 
-    sink = Aes67Sink(
-        device,
-        Aes67Config(
-            multicast_base=args.multicast,
-            port=args.port,
-            interface_ip=args.interface,
-            ptp_grandmaster=args.ptp_grandmaster,
-            ptp_domain=args.ptp_domain,
-            session_name=device.name,
-            sap=not args.no_sap,
-        ),
-    )
+    engine = args.engine
+    if engine == "auto":
+        engine = "aes67" if device.kind == "aes67" else "card"
+    if engine == "aes67" and device.kind in CARD_KINDS:
+        log.warning("running AES67 for a profile whose kind is a local card", extra={"kind": device.kind})
+    if engine == "card" and device.kind == "aes67":
+        log.warning("running the card engine for a profile whose kind is aes67", extra={"kind": device.kind})
+
+    if engine == "aes67":
+        if args.ptp_grandmaster == "00-00-00-00-00-00-00-00":
+            log.warning(
+                "no --ptp-grandmaster given; Dante receivers will show a clock warning "
+                "until the host runs linuxptp and this names its grandmaster"
+            )
+        sink = Aes67Sink(
+            device,
+            Aes67Config(
+                multicast_base=args.multicast,
+                port=args.port,
+                interface_ip=args.interface,
+                ptp_grandmaster=args.ptp_grandmaster,
+                ptp_domain=args.ptp_domain,
+                session_name=device.name,
+                sap=not args.no_sap,
+            ),
+        )
+    else:
+        sink = LocalCardSink(device, LocalCardConfig(device_name=args.device))
     ctx = _ssl_context(args.insecure)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -225,8 +298,11 @@ async def main() -> int:
         await sink.publish_languages(languages)
         for lang in languages:
             grants[lang] = join(args.base, args.room, lang, ctx)
-        for flow in sink.flows:
-            log.info("flow", extra=flow)
+        if engine == "aes67":
+            for flow in sink.flows:
+                log.info("flow", extra=flow)
+        else:
+            log.info("card", extra={"device": sink.card.name, "patch": sink.patch})
 
         tasks = [asyncio.create_task(listen(lang, grants[lang], sink, stop)) for lang in languages]
         tasks.append(asyncio.create_task(status_forever(sink, languages)))

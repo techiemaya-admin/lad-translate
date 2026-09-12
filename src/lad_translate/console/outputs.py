@@ -53,16 +53,22 @@ from . import env
 log = get_logger(__name__)
 
 KINDS_WITH_AN_ENGINE: dict[str, str] = {
-    "aes67": "session/aes67.py, run by tools/output_agent.py at the venue",
+    "aes67": "session/aes67.py: RTP multicast from a Linux box on the Dante VLAN; "
+             "received by Dante hardware with AES67 mode on (not by DVS)",
+    "dante-vsc": "session/localcard.py: played into Dante Virtual Soundcard on the Mac/PC "
+                 "running tools/output_agent.py; DVS transmits it on the Dante network",
+    "coreaudio": "session/localcard.py: any CoreAudio output on the Mac running the agent",
+    "asio": "session/localcard.py: any ASIO/WASAPI output on the PC running the agent",
+    "alsa": "session/localcard.py: any ALSA output on the Linux box running the agent",
 }
 """
 Which device kinds actually route audio, and by what.
 
-The dropdown offers every value the schema accepts, because a profile saved
-for a rig that arrives next month is a reasonable thing to store. But a value
-in a dropdown reads as a capability, and four of the five are not one. The
-page labels each option from this table so the dropdown says so itself. Add a
-kind here when its sink lands, not before.
+Every kind has an engine now. The table stays because the page labels each
+option from it - the description is the option's tooltip, and it is where
+the one distinction that matters at a venue lives: aes67 is a network flow
+that Dante Virtual Soundcard cannot receive, and the other four are a sound
+card on the machine running the agent, which is how DVS is driven.
 """
 
 UNDEFINED_TABLE = "42P01"
