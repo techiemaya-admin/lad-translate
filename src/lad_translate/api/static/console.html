@@ -248,15 +248,18 @@
               <label>Host audio device <input id="dev-device-name" placeholder="Dante Virtual Soundcard" spellcheck="false"></label>
               <label>Kind <select id="dev-kind"></select>
                 <span class="hint">
-                  Kinds marked <em>not built</em> are stored for a future local-card
-                  agent and route nothing. <strong>aes67</strong> is live:
-                  <code>tools/output_agent.py</code> at the venue, received by Dante
-                  devices with AES67 mode switched on.
+                  <strong>dante-vsc</strong> for a Mac or PC running Dante Virtual
+                  Soundcard: the agent plays into DVS as a sound card and DVS transmits
+                  it on the Dante network. <strong>aes67</strong> is a network flow for
+                  Dante <em>hardware</em> with AES67 mode on — DVS cannot receive it.
+                  Both run <code>tools/output_agent.py</code> at the venue.
                 </span>
               </label>
               <label>Channels on the card <input id="dev-channel-count" type="number" min="1" max="64" value="16"></label>
               <label>Sample rate <select id="dev-sample-rate"></select></label>
-              <label class="check"><input id="dev-enabled" type="checkbox" checked> Device enabled</label>
+              <label class="check"><input id="dev-enabled" type="checkbox" checked> Device enabled
+                <span class="hint">Off = kept in the console but the agent refuses to run it.</span>
+              </label>
             </div>
             <p class="muted small-note">
               One language per channel; a language may take several channels

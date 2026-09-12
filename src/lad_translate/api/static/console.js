@@ -637,7 +637,14 @@
       var card = h("div", "device");
 
       var head = h("h3", null, d.name);
-      head.appendChild(h("span", "pill " + (d.enabled ? "on" : "off"), d.enabled ? "enabled" : "disabled"));
+      // "off in profile", not "disabled": the console cannot see the card or
+      // the network, and a pill that reads like connectivity next to a
+      // device named after a real card sends someone to check cables.
+      var state = h("span", "pill " + (d.enabled ? "on" : "off"), d.enabled ? "enabled" : "off in profile");
+      state.title = d.enabled
+        ? "Enabled in the profile. Whether the card is present is known only to the agent on that machine."
+        : "The profile's 'Device enabled' box is unticked; the agent will refuse to run it. Edit and tick it.";
+      head.appendChild(state);
       card.appendChild(head);
 
       var ki = kindInfo(d.kind);
@@ -893,6 +900,9 @@
 
   function saveDevice() {
     var body = collectDevice();
+    if (!body.enabled && !window.confirm(
+      "'Device enabled' is unticked. The device will be kept but the output agent will " +
+      "refuse to run it. Save it disabled?")) return;
     var url = BASE + "/api/outputs/devices" + (editing ? "/" + editing.device_id : "");
     el.saveDevice.disabled = true;
     // Whole map, every time. The server replaces it in one transaction, so

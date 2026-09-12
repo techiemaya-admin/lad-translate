@@ -45,9 +45,15 @@ jobs:
         # backends: faster-whisper, ctranslate2 and piper pull ~1GB of wheels,
         # and the tests that use them fetch another 1.8GB of weights. They skip
         # themselves when the models are absent, which is the point.
+        #
+        # libportaudio2: the sounddevice wheel does not bundle PortAudio on
+        # Linux. The card sink's tests drive a fake stream and only need the
+        # module to import; the one real-device test skips on a runner with
+        # no output device, as it should.
         run: |
+          sudo apt-get install -y -qq libportaudio2 >/dev/null
           uv venv
-          uv pip install -e '.[dev,aes67]' pyjwt fastapi httpx 'uvicorn[standard]' livekit-api qrcode pillow google-auth
+          uv pip install -e '.[dev,aes67,card]' pyjwt fastapi httpx 'uvicorn[standard]' livekit-api qrcode pillow google-auth
 
       - name: Run
         # Chunker, stability, clause detection, drift, backpressure, latency,

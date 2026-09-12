@@ -69,6 +69,7 @@ import numpy as np
 
 from ..config import OutputChannel, OutputDevice
 from ..obs.log import get_logger
+from .pcm import Ring, resample, resampler_is_soxr
 
 log = get_logger(__name__)
 
@@ -153,42 +154,9 @@ class SinkStats:
 
 # --- audio ------------------------------------------------------------------
 
-_soxr = None
-_warned_about_soxr = False
-
-
 def to_48k(pcm: bytes, sample_rate: int) -> np.ndarray:
-    """
-    int16 mono PCM at any rate -> float32 at 48 kHz.
-
-    Piper renders at 22050, and 22050 -> 48000 is not an integer ratio, so
-    this is a real resampler (soxr) when it is installed. The linear fallback
-    exists so the module imports on a box without it, and it says so once:
-    upsampling by interpolation does not alias, but it does roll off the top
-    of the band, which on a handset is audible as a dull voice.
-    """
-    global _soxr, _warned_about_soxr
-    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    if sample_rate == RATE or samples.size == 0:
-        return samples
-    if _soxr is None:
-        try:
-            import soxr
-
-            _soxr = soxr
-        except ImportError:
-            _soxr = False
-    if _soxr:
-        return _soxr.resample(samples, sample_rate, RATE, quality="HQ").astype(np.float32)
-    if not _warned_about_soxr:
-        _warned_about_soxr = True
-        log.warning(
-            "soxr is not installed; resampling to 48 kHz by linear interpolation",
-            extra={"fix": "uv pip install soxr  (or the [aes67] extra)"},
-        )
-    target_len = round(samples.size * RATE / sample_rate)
-    positions = np.linspace(0, samples.size - 1, target_len, dtype=np.float32)
-    return np.interp(positions, np.arange(samples.size), samples).astype(np.float32)
+    """int16 mono PCM at any rate -> float32 at 48 kHz. See session/pcm.py."""
+    return resample(pcm, sample_rate, RATE)
 
 
 def pack_l24(frames: np.ndarray) -> bytes:
@@ -215,65 +183,6 @@ def unpack_l24(payload: bytes, channels: int) -> np.ndarray:
     return (as_int.astype(np.float32) / 8_388_607.0).reshape(-1, channels)
 
 
-class _Ring:
-    """
-    One channel's buffer between push() and the pump.
-
-    Written from the event loop, read from the pump thread, so every access
-    holds the lock. The critical sections are a few hundred samples; the pump
-    holds it for well under the millisecond it has.
-    """
-
-    __slots__ = ("buf", "fill", "lock", "read_at")
-
-    def __init__(self, capacity: int) -> None:
-        self.buf = np.zeros(capacity, dtype=np.float32)
-        self.read_at = 0
-        self.fill = 0
-        self.lock = threading.Lock()
-
-    @property
-    def capacity(self) -> int:
-        return self.buf.size
-
-    def free(self) -> int:
-        with self.lock:
-            return self.capacity - self.fill
-
-    def seconds(self) -> float:
-        with self.lock:
-            return self.fill / RATE
-
-    def write(self, samples: np.ndarray) -> int:
-        """Append what fits. Returns how many samples were written."""
-        with self.lock:
-            n = min(samples.size, self.capacity - self.fill)
-            if n <= 0:
-                return 0
-            write_at = (self.read_at + self.fill) % self.capacity
-            first = min(n, self.capacity - write_at)
-            self.buf[write_at : write_at + first] = samples[:first]
-            if n > first:
-                self.buf[: n - first] = samples[first:n]
-            self.fill += n
-            return n
-
-    def read(self, n: int, out: np.ndarray) -> int:
-        """Fill `out` (length n) with buffered audio, zeros past the end.
-        Returns how many real samples there were."""
-        with self.lock:
-            have = min(n, self.fill)
-            first = min(have, self.capacity - self.read_at)
-            out[:first] = self.buf[self.read_at : self.read_at + first]
-            if have > first:
-                out[first:have] = self.buf[: have - first]
-            if have < n:
-                out[have:n] = 0.0
-            self.read_at = (self.read_at + have) % self.capacity
-            self.fill -= have
-            return have
-
-
 @dataclass
 class _Flow:
     index: int
@@ -283,7 +192,7 @@ class _Flow:
     numbering are carried as silent channels so that a receiver's channel N
     is always the device's channel (flow_index * 8 + N)."""
 
-    rings: list[_Ring | None]
+    rings: list[Ring | None]
     """One per flow channel; None where the device has nothing mapped."""
 
     gains: np.ndarray
@@ -313,7 +222,7 @@ class Aes67Sink:
         self.config = config or Aes67Config()
         self.stats = SinkStats()
         self._flows: list[_Flow] = []
-        self._by_language: dict[str, list[tuple[_Ring, float]]] = {}
+        self._by_language: dict[str, list[tuple[Ring, float]]] = {}
         self._pump: threading.Thread | None = None
         self._running = threading.Event()
         self._sap_task: asyncio.Task | None = None
@@ -370,7 +279,7 @@ class Aes67Sink:
                 "languages": sorted(self._by_language),
                 "silent_languages": sorted(mapped - set(languages)),
                 "ptp_grandmaster": self.config.ptp_grandmaster,
-                "resampler": "soxr" if _resampler_is_soxr() else "linear",
+                "resampler": "soxr" if resampler_is_soxr() else "linear",
             },
         )
 
@@ -455,7 +364,7 @@ class Aes67Sink:
                 continue
             span = span[: mapped_positions[-1] + 1]
 
-            rings: list[_Ring | None] = []
+            rings: list[Ring | None] = []
             gains = np.zeros(len(span), dtype=np.float32)
             carried: list[OutputChannel] = []
             for position, channel_number in enumerate(span):
@@ -463,7 +372,7 @@ class Aes67Sink:
                 if channel is None:
                     rings.append(None)
                     continue
-                ring = _Ring(int(RING_S * RATE))
+                ring = Ring(int(RING_S * RATE), RATE)
                 gain = float(10 ** (channel.gain_db / 20.0))
                 rings.append(ring)
                 gains[position] = gain
@@ -619,22 +528,6 @@ class Aes67Sink:
             }
             for f in self._flows
         ]
-
-
-def _resampler_is_soxr() -> bool:
-    return bool(_soxr) if _soxr is not None else _probe_soxr()
-
-
-def _probe_soxr() -> bool:
-    global _soxr
-    try:
-        import soxr
-
-        _soxr = soxr
-        return True
-    except ImportError:
-        _soxr = False
-        return False
 
 
 def _local_ip() -> str:

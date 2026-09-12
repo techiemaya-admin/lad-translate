@@ -34,6 +34,10 @@ stt-streaming = ["nemo_toolkit[asr]>=2.0"]
 # imports without it and falls back to linear interpolation, loudly; see
 # session/aes67.py. The venue agent (tools/output_agent.py) needs livekit too.
 aes67 = ["soxr>=0.5"]
+# A sound card on the machine running the agent - Dante Virtual Soundcard on
+# a Mac or PC, or anything CoreAudio / ASIO / WASAPI / ALSA can open. The
+# wheel carries PortAudio on macOS and Windows; Linux needs libportaudio2.
+card = ["sounddevice>=0.5", "soxr>=0.5"]
 
 # --- Transport and storage --------------------------------------------------
 livekit = ["livekit-agents~=1.4", "livekit>=1.0"]
