@@ -1492,38 +1492,44 @@ the maximum across sinks. Handsets drifting while WebRTC is healthy is still an
 audience out of sync; summing would double-count one phrase and make
 `session/drift.py` skip far too eagerly.
 
-## The live transcript
+## Choosing the input
 
-The console's Transcript panel shows what the speaker said and what went out
-in each language, as it happens, with the latency each one achieved.
+The speaker is whatever publishes the source track. Three ways, and the wrong
+default is the one that bites: **a laptop's default input is its built-in
+microphone**, pointing at the room rather than at the desk send patched into
+its sound card.
 
-    0:05  Good morning everyone, and thank you for joining us today.
-          AR   صباح الخير للجميع، وشكرًا لانضمامكم إلينا اليوم.       1.36s
-          DE   Guten Morgen allerseits, und danke, dass Sie heute dabei sind.   1.23s
-          FR   Bonjour à tous, et merci de nous rejoindre aujourd'hui.          1.21s
+**A phone**, via the speaker QR. Nothing to choose; processing stays on,
+because a handset playing a translation into the room would otherwise feed
+back into its own microphone.
 
-It exists because the status tiles cannot tell you the words are wrong. A
-session with zero drops and a good p50 was, on one occasion here, returning
-Quranic exegesis in Arabic - found only because someone read the output. So:
-read the first minute of any new room in this panel.
+**A browser on a laptop.** The speaker page has an **Input** picker. Device
+names are only readable once the microphone has been allowed, so before that
+it offers one button, *List inputs*, which asks for permission and releases
+it again. Choosing a device turns echo cancellation, noise suppression and
+gain control OFF: a desk send has none of those problems and every one of
+those cures hurts it - AGC pumps on a mixed feed, noise suppression eats the
+tail of a sentence. The choice is remembered per browser.
 
-**Read from the database, not the journal.** The session already writes a row
-per chunk per language - source, translation, latency - and the console
-already holds a pool for the hardware output panel. The journal carries no
-text, and a talk's content does not belong in the system log.
+**No browser at all**, which is what a venue wants:
 
-**Polled with a high-water mark.** The page sends the highest chunk id it
-holds and gets only what is newer. A forty-minute keynote is thousands of
-rows; re-sending them every two seconds to redraw a panel nobody scrolled is
-how a console becomes the reason the box is busy. The panel keeps the last
-300 lines in the DOM for the same reason.
+```bash
+python tools/speak.py --list-devices
+python tools/speak.py --device "Dante Virtual Soundcard" --monitor     # levels only
+python tools/speak.py --room dubai-demo --base https://...run.app \
+    --device "Dante Virtual Soundcard" --channel 1
+```
 
-A language that produced nothing for a chunk is shown as a line saying so,
-not omitted: a phrase that reached three languages and not the fourth is
-exactly what an operator needs to see. Latencies over 5s are amber. RTL text
-is isolated to its own column so the language codes and latencies stay in
-line down the page. **Follow** sticks to the newest line unless you scroll
-up; **Copy all** takes the visible transcript to the clipboard.
+`--monitor` joins no room and publishes nothing; it shows the peak on every
+channel with anything on it, so "which channel is the desk on" is a question
+the rig answers rather than a guess. While publishing, the level is printed
+every few seconds with a verdict, because **a patch that is connected but
+forty decibels down looks identical to a working one from every other angle**
+and the pipeline's VAD treats it as silence. Measured on this rig: a Dante
+subscription arriving at -37 dBFS peak, which transcribed nothing at all.
+
+The console cannot offer this list. It runs on the VM in Dubai; only the
+machine holding the card can enumerate its own audio devices.
 
 ## Recording a session
 
