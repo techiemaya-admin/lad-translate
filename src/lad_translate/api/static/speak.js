@@ -15,6 +15,14 @@
   "use strict";
 
   var LK = window.LivekitClient;
+
+  // Which input to open. A phone has one and never sees this; a laptop at a
+  // venue has several, and its default is the built-in microphone - the one
+  // pointing at the room rather than the desk send patched into its sound
+  // card. Remembered per device so the rig comes back the same tomorrow.
+  var INPUT_KEY = "lad.speaker.input";
+  var chosenInput = null;
+  try { chosenInput = window.localStorage.getItem(INPUT_KEY); } catch (e) { chosenInput = null; }
   // The page is served at two URL shapes and must talk to the matching API:
   //
   //   /s/<session-id>      -> /api/sessions/<session-id>
@@ -30,6 +38,11 @@
 
 
   var el = {
+    inputPick: document.getElementById("input-pick"),
+    inputDevice: document.getElementById("input-device"),
+    inputList: document.getElementById("input-list"),
+    inputHint: document.getElementById("input-hint"),
+    goSub: document.getElementById("go-sub"),
     event: document.getElementById("event"),
     subtitle: document.getElementById("subtitle"),
     start: document.getElementById("start"),
@@ -103,9 +116,104 @@
           el.subtitle.textContent += " · This session is being recorded.";
         }
         show("start");
+        listInputs();
       })
       .catch(function (e) { fail(e.message); });
   }
+
+  // --- choosing an input ----------------------------------------------------
+
+  function isDefaultish(device) {
+    // Chrome lists synthetic "default"/"communications" entries that follow
+    // the OS. Real hardware is what a venue wants to pin.
+    return device.deviceId === "default" || device.deviceId === "communications";
+  }
+
+  function renderInputs(devices) {
+    el.inputDevice.innerHTML = "";
+    var auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Default input";
+    el.inputDevice.appendChild(auto);
+
+    var named = 0;
+    devices.forEach(function (d) {
+      // Without permission a browser reports inputs with no label AND no
+      // deviceId. An option that cannot be selected is noise, so those are
+      // left out and the "List inputs" button is what the operator sees.
+      if (d.kind !== "audioinput" || isDefaultish(d) || !d.deviceId) return;
+      var opt = document.createElement("option");
+      opt.value = d.deviceId;
+      opt.textContent = d.label || ("Input " + (named + 1));
+      if (d.label) named++;
+      if (d.deviceId === chosenInput) opt.selected = true;
+      el.inputDevice.appendChild(opt);
+    });
+
+    // Hide it only when we KNOW there is nothing to choose: labels readable
+    // and exactly one input. Without permission a browser reports one
+    // unnamed input whether it is a phone with one microphone or a Mac with
+    // a sound card, and hiding on that guess would hide the control that
+    // unlocks the names.
+    var inputs = devices.filter(function (d) {
+      return d.kind === "audioinput" && !isDefaultish(d) && d.deviceId;
+    });
+    el.inputPick.hidden = named > 0 && inputs.length <= 1;
+    el.inputList.hidden = named > 0;
+    el.inputHint.textContent = named
+      ? "Pick the desk send rather than the built-in microphone. Processing is left on for a phone mic and turned off for anything else."
+      : "Allow the microphone once to see input names.";
+    updateGoSub();
+  }
+
+  function updateGoSub() {
+    var opt = el.inputDevice.options[el.inputDevice.selectedIndex];
+    var picked = opt && opt.value;
+    el.goSub.textContent = picked ? "uses " + opt.textContent : "uses this device's default input";
+  }
+
+  function listInputs() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then(renderInputs, function () {});
+  }
+
+  function unlockInputNames() {
+    // A gesture, so the permission prompt is allowed. The stream is released
+    // immediately: this is only to learn the labels.
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      s.getTracks().forEach(function (t) { t.stop(); });
+      listInputs();
+    }, function () {
+      el.inputHint.textContent = "Microphone permission was refused, so inputs cannot be listed.";
+    });
+  }
+
+  function audioConstraints() {
+    var opt = el.inputDevice.options[el.inputDevice.selectedIndex];
+    var id = opt && opt.value;
+    if (!id) {
+      // The phone case, unchanged: a handset playing a translation into the
+      // room would otherwise feed back into its own microphone.
+      return { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    }
+    // A chosen device is a desk send or a sound card. Every one of those
+    // cures hurts it: AGC pumps on a mixed feed and noise suppression eats
+    // the tail of a sentence.
+    return {
+      deviceId: { exact: id },
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1
+    };
+  }
+
+  el.inputDevice.addEventListener("change", function () {
+    chosenInput = el.inputDevice.value || null;
+    try {
+      if (chosenInput) window.localStorage.setItem(INPUT_KEY, chosenInput);
+      else window.localStorage.removeItem(INPUT_KEY);
+    } catch (e) { /* private browsing; the choice just will not persist */ }
+    updateGoSub();
+  });
+  el.inputList.addEventListener("click", unlockInputNames);
 
   // --- speaking -----------------------------------------------------------
 
@@ -116,18 +224,20 @@
     // Inside the gesture, before any await. echoCancellation is on because a
     // phone that is also playing a translation would otherwise feed back into
     // its own microphone. A venue takes a desk send and needs none of this.
-    navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1
-      }
-    }).then(publish).catch(function (err) {
+    navigator.mediaDevices.getUserMedia({ audio: audioConstraints() })
+      .then(function (mediaStream) {
+        listInputs();   // labels are readable now that permission is granted
+        return publish(mediaStream);
+      }).catch(function (err) {
       if (err && err.name === "NotAllowedError") {
         fail("Microphone permission was refused. Allow it in your browser settings and try again.");
       } else if (err && err.name === "NotFoundError") {
         fail("No microphone found on this device.");
+      } else if (err && (err.name === "OverconstrainedError" || err.name === "NotReadableError")) {
+        // The remembered device is gone, or something else holds it open.
+        fail("That input is not available: " + err.name +
+             ". Pick another in the Input list and try again.");
+        listInputs();
       } else {
         fail("Could not open the microphone: " + (err && err.name ? err.name : "unknown error"));
       }

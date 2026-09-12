@@ -124,6 +124,38 @@ def _fold(name: str) -> str:
     return re.sub(r"[\s_\-]+", "", name).lower()
 
 
+def list_input_devices() -> list[DeviceInfo]:
+    """
+    Every device this machine can capture from.
+
+    The counterpart of list_output_devices, and it matters for the same
+    reason: a venue that has patched a desk send into Dante Virtual
+    Soundcard's input channels wants THAT as the speaker, not the laptop's
+    built-in microphone two metres from the lectern.
+    """
+    import sounddevice as sd
+
+    apis = sd.query_hostapis()
+    out = []
+    for index, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] > 0:
+            out.append(
+                DeviceInfo(
+                    index=index,
+                    name=d["name"],
+                    max_output_channels=int(d["max_input_channels"]),
+                    default_samplerate=float(d["default_samplerate"]),
+                    hostapi=apis[d["hostapi"]]["name"] if d["hostapi"] < len(apis) else "?",
+                )
+            )
+    return out
+
+
+def find_input_device(name: str, devices: list[DeviceInfo] | None = None) -> DeviceInfo:
+    """find_device, against the inputs."""
+    return find_device(name, list_input_devices() if devices is None else devices)
+
+
 def list_output_devices() -> list[DeviceInfo]:
     """Every device this machine can play to, as PortAudio sees them."""
     import sounddevice as sd
@@ -366,5 +398,7 @@ __all__ = [
     "LocalCardConfig",
     "LocalCardSink",
     "find_device",
+    "find_input_device",
+    "list_input_devices",
     "list_output_devices",
 ]

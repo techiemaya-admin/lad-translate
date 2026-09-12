@@ -1491,6 +1491,45 @@ the maximum across sinks. Handsets drifting while WebRTC is healthy is still an
 audience out of sync; summing would double-count one phrase and make
 `session/drift.py` skip far too eagerly.
 
+## Choosing the input
+
+The speaker is whatever publishes the source track. Three ways, and the wrong
+default is the one that bites: **a laptop's default input is its built-in
+microphone**, pointing at the room rather than at the desk send patched into
+its sound card.
+
+**A phone**, via the speaker QR. Nothing to choose; processing stays on,
+because a handset playing a translation into the room would otherwise feed
+back into its own microphone.
+
+**A browser on a laptop.** The speaker page has an **Input** picker. Device
+names are only readable once the microphone has been allowed, so before that
+it offers one button, *List inputs*, which asks for permission and releases
+it again. Choosing a device turns echo cancellation, noise suppression and
+gain control OFF: a desk send has none of those problems and every one of
+those cures hurts it - AGC pumps on a mixed feed, noise suppression eats the
+tail of a sentence. The choice is remembered per browser.
+
+**No browser at all**, which is what a venue wants:
+
+```bash
+python tools/speak.py --list-devices
+python tools/speak.py --device "Dante Virtual Soundcard" --monitor     # levels only
+python tools/speak.py --room dubai-demo --base https://...run.app \
+    --device "Dante Virtual Soundcard" --channel 1
+```
+
+`--monitor` joins no room and publishes nothing; it shows the peak on every
+channel with anything on it, so "which channel is the desk on" is a question
+the rig answers rather than a guess. While publishing, the level is printed
+every few seconds with a verdict, because **a patch that is connected but
+forty decibels down looks identical to a working one from every other angle**
+and the pipeline's VAD treats it as silence. Measured on this rig: a Dante
+subscription arriving at -37 dBFS peak, which transcribed nothing at all.
+
+The console cannot offer this list. It runs on the VM in Dubai; only the
+machine holding the card can enumerate its own audio devices.
+
 ## Recording a session
 
 The speaker and every translation, as WAV files, from the console's REC button.

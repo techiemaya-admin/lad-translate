@@ -19,9 +19,15 @@
   <!-- The tap on this button is the user gesture that unlocks microphone
        access. Nothing may request the mic outside its handler. -->
   <section id="start" hidden>
+    <div class="input-pick" id="input-pick" hidden>
+      <label for="input-device">Input</label>
+      <select id="input-device"></select>
+      <button id="input-list" class="link" type="button">List inputs</button>
+      <p class="hint" id="input-hint"></p>
+    </div>
     <button id="go" class="lang start-btn">
       <span>Start speaking</span>
-      <span class="english">uses this phone's mic</span>
+      <span class="english" id="go-sub">uses this phone's mic</span>
     </button>
     <p class="hint">Hold the phone about a hand's width from your mouth and
       speak normally. Everything you say is transcribed, translated and sent to

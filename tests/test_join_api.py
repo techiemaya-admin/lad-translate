@@ -381,3 +381,42 @@ async def test_request_is_resolvable_so_the_body_is_still_parsed(env):
     r = await client.post(f"/api/rooms/{config.room_name}/join", json={"language": "fr"})
     assert r.status_code != 422, "handler annotations are not resolving"
     assert r.status_code == 200
+
+
+# --- the speaker page's input picker ----------------------------------------
+
+
+async def test_the_speaker_page_offers_an_input_picker(env):
+    """
+    A laptop at a venue defaults to its built-in microphone - the one
+    pointing at the room rather than the desk send patched into its sound
+    card. The page has to let someone change that.
+    """
+    client, *_ = env
+    page = (await client.get("/static/speak.html")).text
+    assert 'id="input-device"' in page
+    assert 'id="input-list"' in page
+
+
+async def test_processing_is_on_for_a_phone_and_off_for_a_chosen_device(env):
+    """
+    Echo cancellation, noise suppression and AGC exist for a handset playing
+    a translation into the room it is listening to. On a desk send every one
+    of them hurts: AGC pumps on a mixed feed and noise suppression eats the
+    tail of a sentence.
+    """
+    client, *_ = env
+    script = (await client.get("/static/speak.js")).text
+    assert "audioConstraints" in script
+    assert "deviceId: { exact: id }" in script
+    # The phone branch keeps them on; the device branch turns them off.
+    assert "echoCancellation: true" in script
+    assert "echoCancellation: false" in script
+    assert "autoGainControl: false" in script
+
+
+async def test_the_chosen_input_survives_a_reload(env):
+    """A rig set up once should come back the same tomorrow morning."""
+    client, *_ = env
+    script = (await client.get("/static/speak.js")).text
+    assert "localStorage" in script and "lad.speaker.input" in script

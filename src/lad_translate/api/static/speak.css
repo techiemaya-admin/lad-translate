@@ -35,3 +35,39 @@
 }
 .stats dt { color: var(--muted); }
 .stats dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+/* Input picker. Hidden on a phone, which has one microphone and no reason to
+   choose; shown where the machine has several, because a laptop at a venue
+   defaults to the microphone two metres from the lectern rather than to the
+   desk send patched into its sound card. */
+/* display: grid outranks the browser's [hidden], so hidden stops meaning
+   hidden unless this is here. The same omission has bitten the console
+   twice. */
+.input-pick[hidden] { display: none; }
+.input-pick {
+  display: grid;
+  gap: .4rem;
+  margin-bottom: 1rem;
+  padding: .8rem .9rem;
+  background: var(--surface);
+  border: 1px solid var(--surface-hi);
+  border-radius: var(--radius);
+}
+.input-pick label { color: var(--muted); font-size: .85rem; }
+.input-pick select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--surface-hi);
+  border-radius: 8px;
+  padding: .55rem .6rem;
+  font: inherit;
+  font-size: .95rem;
+  width: 100%;
+}
+.input-pick select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.input-pick .hint { margin-top: 0; font-size: .8rem; }
+.input-pick .link {
+  background: none; border: 0; padding: 0;
+  color: var(--accent); font: inherit; font-size: .85rem;
+  cursor: pointer; text-align: left; justify-self: start;
+}
