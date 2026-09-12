@@ -32,6 +32,23 @@
     stop: $("stop"),
     presetCards: $("preset-cards"),
     presetChosen: $("preset-chosen"),
+    lcd: $("lcd"),
+    lcdName: $("lcd-name"),
+    lcdTag: $("lcd-tag"),
+    lcdSpec: $("lcd-spec"),
+    lcdSummary: $("lcd-summary"),
+    lcdMeasured: $("lcd-measured"),
+    lcdWarning: $("lcd-warning"),
+    faderEmit: $("fader-emit"),
+    faderWindow: $("fader-window"),
+    faderEmitValue: $("fader-emit-value"),
+    faderWindowValue: $("fader-window-value"),
+    faderReset: $("fader-reset"),
+    ledRun: $("led-run"),
+    ledWait: $("led-wait"),
+    ledDrop: $("led-drop"),
+    deckApply: $("deck-apply"),
+    deckStop: $("deck-stop"),
     advanced: $("advanced-fields"),
     advancedChanges: $("advanced-changes"),
     toggle: $("toggle-advanced"),
@@ -188,24 +205,145 @@
       el.note.textContent = note;
       el.note.className = cls;
       el.note.hidden = !note;
+      setLeds(s);
     }).catch(function (err) {
       el.pill.textContent = "unreachable";
       el.pill.className = "pill off";
       el.refreshed.textContent = err.message;
+      setLeds({ active: false, waiting_for_speaker: false, dropped_s: 0 });
     });
   }
 
-  // --- presets ----------------------------------------------------------------
+  // --- preset deck ------------------------------------------------------------
+  //
+  // Pads arm a preset; the LCD shows what the armed (or hovered) preset
+  // measured, warning included; the faders are the chunker pair, linked
+  // because moving one alone is how audio gets shed; APPLY commits. The pad
+  // that is lit green is what the box is running now, worked out by matching
+  // the live settings against each preset's numbers, so an operator can see
+  // at a glance whether the deck and the box agree.
+
+  var EMIT_KEY = "LAD_TRANSLATE_EMIT_INTERVAL";
+  var WINDOW_KEY = "LAD_TRANSLATE_WINDOW";
+  var faderOverride = false;   // the operator moved a fader since arming a preset
+
+  function livePresetKey() {
+    var keys = Object.keys(presetsByKey);
+    for (var i = 0; i < keys.length; i++) {
+      var p = presetsByKey[keys[i]];
+      if (currentSettings.STT_BACKEND === p.stt_backend &&
+          currentSettings.LAD_TRANSLATE_STT_MODEL === p.model &&
+          parseFloat(currentSettings[EMIT_KEY]) === p.emit_interval &&
+          parseFloat(currentSettings[WINDOW_KEY]) === p.window) {
+        return p.key;
+      }
+    }
+    return null;
+  }
+
+  function showOnLcd(preset, tag) {
+    if (!preset) {
+      el.lcd.classList.add("blank");
+      el.lcdName.textContent = "NO PRESET";
+      el.lcdTag.textContent = ""; el.lcdTag.className = "lcd-tag";
+      el.lcdSpec.textContent = currentSettings.STT_BACKEND
+        ? (currentSettings.STT_BACKEND + " " + (currentSettings.LAD_TRANSLATE_STT_MODEL || "") +
+           "  " + (currentSettings[EMIT_KEY] || "?") + "/" + (currentSettings[WINDOW_KEY] || "?"))
+        : "";
+      el.lcdSummary.textContent = "The box is on raw settings that match no preset.";
+      el.lcdMeasured.textContent = "";
+      el.lcdWarning.hidden = true;
+      return;
+    }
+    el.lcd.classList.remove("blank");
+    el.lcdName.textContent = preset.label;
+    el.lcdTag.textContent = tag || "";
+    el.lcdTag.className = "lcd-tag" + (tag === "LIVE" ? " live" : "");
+    el.lcdSpec.textContent = preset.stt_backend + " " + preset.model + "  " +
+      preset.emit_interval.toFixed(1) + "/" + preset.window.toFixed(1) + "  " + preset.lookahead;
+    el.lcdSummary.textContent = preset.summary;
+    el.lcdMeasured.textContent = preset.measured;
+    el.lcdWarning.textContent = preset.warning || "";
+    el.lcdWarning.hidden = !preset.warning;
+  }
+
+  function lcdDefault() {
+    if (chosenPreset) { showOnLcd(presetsByKey[chosenPreset], "ARMED"); return; }
+    var live = livePresetKey();
+    showOnLcd(live ? presetsByKey[live] : null, live ? "LIVE" : "");
+  }
+
+  function setFaders(emit, win, override) {
+    el.faderEmit.value = emit;
+    el.faderWindow.value = win;
+    el.faderEmitValue.textContent = parseFloat(emit).toFixed(1);
+    el.faderWindowValue.textContent = parseFloat(win).toFixed(1);
+    el.faderEmitValue.classList.toggle("override", !!override);
+    el.faderWindowValue.classList.toggle("override", !!override);
+  }
+
+  function syncAdvancedFromFaders() {
+    // The faders and the Advanced fields are the same two settings. One
+    // path to the server: apply() reads the Advanced fields, so the faders
+    // write there and the badge counts them like any other edit.
+    var emitInput = $("adv-" + EMIT_KEY), winInput = $("adv-" + WINDOW_KEY);
+    if (emitInput) emitInput.value = parseFloat(el.faderEmit.value).toFixed(1);
+    if (winInput) winInput.value = parseFloat(el.faderWindow.value).toFixed(1);
+    updateAdvancedBadge();
+  }
+
+  function fadersFollowArmed() {
+    faderOverride = false;
+    var p = chosenPreset ? presetsByKey[chosenPreset] : null;
+    if (p) {
+      setFaders(p.emit_interval, p.window, false);
+      // Arming a preset means the preset's pair, not a stale override: put
+      // the Advanced fields back to the live values so apply() sends the
+      // preset alone and the server's "raw values win" cannot bite.
+      var emitInput = $("adv-" + EMIT_KEY), winInput = $("adv-" + WINDOW_KEY);
+      if (emitInput) emitInput.value = currentSettings[EMIT_KEY] || "";
+      if (winInput) winInput.value = currentSettings[WINDOW_KEY] || "";
+      updateAdvancedBadge();
+    } else {
+      setFaders(parseFloat(currentSettings[EMIT_KEY]) || 3.0, parseFloat(currentSettings[WINDOW_KEY]) || 6.0, false);
+    }
+  }
+
+  function onFaderInput() {
+    faderOverride = true;
+    setFaders(el.faderEmit.value, el.faderWindow.value, true);
+    syncAdvancedFromFaders();
+  }
 
   function selectPreset(key) {
     chosenPreset = key;
     Array.prototype.forEach.call(el.presetCards.children, function (c) {
-      c.classList.toggle("selected", c.dataset.key === key);
-      c.setAttribute("aria-pressed", String(c.dataset.key === key));
+      var armed = c.dataset.key === key;
+      c.classList.toggle("armed", armed);
+      c.setAttribute("aria-pressed", String(armed));
     });
     var p = presetsByKey[key];
-    el.presetChosen.textContent = p ? p.label : "none selected";
+    el.presetChosen.textContent = p ? "armed: " + p.label : "nothing armed";
     el.presetChosen.className = "chip" + (p ? " accent" : "");
+    fadersFollowArmed();
+    lcdDefault();
+  }
+
+  function markLivePad() {
+    var live = livePresetKey();
+    Array.prototype.forEach.call(el.presetCards.children, function (c) {
+      var isLive = c.dataset.key === live;
+      c.classList.toggle("live", isLive);
+      var led = c.querySelector(".pad-led");
+      if (led) led.className = "led pad-led" + (isLive ? " on" : "");
+      var sub = c.querySelector(".pad-sub");
+      if (sub) sub.textContent = presetSub(presetsByKey[c.dataset.key]) + (isLive ? "  · LIVE" : "");
+    });
+  }
+
+  function presetSub(p) {
+    return p.stt_backend.replace("faster-whisper", "whisper") + " " + p.model + " · " +
+      p.emit_interval.toFixed(1) + "/" + p.window.toFixed(1);
   }
 
   function renderPresets(presets) {
@@ -213,25 +351,34 @@
     presetsByKey = {};
     presets.forEach(function (p) {
       presetsByKey[p.key] = p;
-      var card = h("div", "preset");
-      card.tabIndex = 0;
-      card.dataset.key = p.key;
-      card.setAttribute("role", "button");
-      card.setAttribute("aria-pressed", "false");
-
-      var head = h("h3", null, p.label);
-      if (p.warning) head.appendChild(h("span", "pill warn", "caution"));
-      card.appendChild(head);
-      card.appendChild(h("p", null, p.summary));
-      card.appendChild(h("p", "measured", p.measured));
-      if (p.warning) card.appendChild(h("p", "warning", p.warning));
-
-      card.addEventListener("click", function () { selectPreset(p.key); });
-      card.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectPreset(p.key); }
-      });
-      el.presetCards.appendChild(card);
+      var pad = h("button", "pad");
+      pad.type = "button";
+      pad.dataset.key = p.key;
+      pad.setAttribute("aria-pressed", "false");
+      pad.title = p.summary;
+      pad.appendChild(h("span", "led pad-led"));
+      if (p.warning) {
+        var caution = h("span", "led pad-caution warn");
+        caution.title = "Carries a warning - read the display";
+        pad.appendChild(caution);
+      }
+      pad.appendChild(h("span", "pad-name", p.label));
+      pad.appendChild(h("span", "pad-sub", presetSub(p)));
+      pad.addEventListener("click", function () { selectPreset(p.key); });
+      pad.addEventListener("mouseenter", function () { showOnLcd(p, chosenPreset === p.key ? "ARMED" : (livePresetKey() === p.key ? "LIVE" : "")); });
+      pad.addEventListener("mouseleave", lcdDefault);
+      pad.addEventListener("focus", function () { showOnLcd(p, chosenPreset === p.key ? "ARMED" : ""); });
+      pad.addEventListener("blur", lcdDefault);
+      el.presetCards.appendChild(pad);
     });
+    markLivePad();
+    lcdDefault();
+  }
+
+  function setLeds(s) {
+    el.ledRun.className = "led" + (s.active && !s.waiting_for_speaker ? " on" : "");
+    el.ledWait.className = "led" + (s.active && s.waiting_for_speaker ? " warn" : "");
+    el.ledDrop.className = "led" + (s.dropped_s > 0 ? " bad" : "");
   }
 
   // --- advanced ----------------------------------------------------------------
@@ -246,7 +393,17 @@
       input.dataset.key = key;
       input.spellcheck = false;
       input.value = settings[key] === undefined ? "" : settings[key];
-      input.addEventListener("input", updateAdvancedBadge);
+      input.addEventListener("input", function () {
+        updateAdvancedBadge();
+        if (key === EMIT_KEY || key === WINDOW_KEY) {
+          faderOverride = true;
+          setFaders(
+            key === EMIT_KEY ? (parseFloat(input.value) || el.faderEmit.value) : el.faderEmit.value,
+            key === WINDOW_KEY ? (parseFloat(input.value) || el.faderWindow.value) : el.faderWindow.value,
+            true
+          );
+        }
+      });
       label.appendChild(input);
       el.advanced.appendChild(label);
     });
@@ -313,6 +470,7 @@
       restart: true
     };
     el.restart.disabled = true;
+    el.deckApply.disabled = true;
     api(BASE + "/api/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -326,6 +484,7 @@
       toast(err.message, true);
     }).then(function () {
       el.restart.disabled = false;
+      el.deckApply.disabled = false;
       refreshStatus();
     });
   }
@@ -708,6 +867,9 @@
         el.publicHost.title = "Where phones reach the join service";
         el.build.textContent = "build " + (both[1].build || "—");
         renderAdvanced(currentSettings);
+        markLivePad();
+        fadersFollowArmed();
+        lcdDefault();
         refreshQr();
       });
   }
@@ -720,6 +882,11 @@
   });
   el.restart.addEventListener("click", apply);
   el.stop.addEventListener("click", stop);
+  el.deckApply.addEventListener("click", apply);
+  el.deckStop.addEventListener("click", stop);
+  el.faderEmit.addEventListener("input", onFaderInput);
+  el.faderWindow.addEventListener("input", onFaderInput);
+  el.faderReset.addEventListener("click", fadersFollowArmed);
   el.room.addEventListener("change", function () { refreshQr(); refreshStatus(); });
   el.addDevice.addEventListener("click", function () { openEditor(null); });
   el.cancelDevice.addEventListener("click", closeEditor);
