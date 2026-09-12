@@ -89,19 +89,69 @@
         </section>
 
         <!-- ============================================================ -->
-        <section class="card" id="presets" data-title="Presets">
+        <section class="card deck" id="presets" data-title="Presets">
           <div class="card-head">
             <div>
-              <h2>Preset</h2>
+              <h2>Preset deck</h2>
               <p class="muted">
-                Each carries what it actually measured. The warnings are the point:
-                a pair that looked better on paper dropped 225 seconds of live speech.
-                Pick one, then <em>Apply &amp; restart</em>.
+                Press a pad to arm a preset, ride the faders if you must, then hit
+                <em>Apply</em>. The lit pad is what the box is running now. Amber
+                LEDs mean the preset carries a warning — read it in the display
+                before you take it to a room.
               </p>
             </div>
-            <span class="chip" id="preset-chosen">none selected</span>
+            <span class="chip" id="preset-chosen">nothing armed</span>
           </div>
-          <div class="preset-grid" id="preset-cards"></div>
+
+          <div class="deck-body">
+            <div class="deck-column pads-col">
+              <div class="deck-label">PRESETS</div>
+              <div class="pads" id="preset-cards" role="group" aria-label="Preset pads"></div>
+            </div>
+
+            <div class="deck-column lcd-col">
+              <div class="deck-label">DISPLAY</div>
+              <div class="lcd" id="lcd" aria-live="polite">
+                <div class="lcd-row lcd-title"><span id="lcd-name">—</span><span class="lcd-tag" id="lcd-tag"></span></div>
+                <div class="lcd-row lcd-spec" id="lcd-spec"></div>
+                <div class="lcd-row" id="lcd-summary"></div>
+                <div class="lcd-row lcd-measured" id="lcd-measured"></div>
+                <div class="lcd-row lcd-warning" id="lcd-warning" hidden></div>
+              </div>
+            </div>
+
+            <div class="deck-column strip-col">
+              <div class="deck-label">CHUNKER <span class="led link on" id="led-link" title="Emit interval and window move together"></span> LINK</div>
+              <div class="faders">
+                <label class="fader">
+                  <span class="fader-value" id="fader-emit-value">3.0</span>
+                  <input type="range" id="fader-emit" min="0.5" max="6" step="0.1" value="3" aria-label="Emit interval, seconds">
+                  <span class="fader-name">EMIT<small>s</small></span>
+                </label>
+                <label class="fader">
+                  <span class="fader-value" id="fader-window-value">6.0</span>
+                  <input type="range" id="fader-window" min="1" max="12" step="0.5" value="6" aria-label="Window, seconds">
+                  <span class="fader-name">WINDOW<small>s</small></span>
+                </label>
+              </div>
+              <button class="ghost small" id="fader-reset" title="Back to the armed preset's pair">Reset</button>
+            </div>
+
+            <div class="deck-column transport-col">
+              <div class="deck-label">TRANSPORT</div>
+              <div class="leds">
+                <span class="led-item"><span class="led" id="led-run"></span>RUN</span>
+                <span class="led-item"><span class="led" id="led-wait"></span>WAIT</span>
+                <span class="led-item"><span class="led" id="led-drop"></span>DROP</span>
+              </div>
+              <button id="deck-apply" class="transport-btn apply" title="Apply the armed preset and fader overrides, then restart">
+                <span class="glyph">▶</span><span>APPLY</span>
+              </button>
+              <button id="deck-stop" class="transport-btn stop" title="Stop the session">
+                <span class="glyph">■</span><span>STOP</span>
+              </button>
+            </div>
+          </div>
         </section>
 
         <!-- ============================================================ -->
