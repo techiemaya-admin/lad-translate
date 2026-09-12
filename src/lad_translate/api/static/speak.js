@@ -96,6 +96,12 @@
         el.subtitle.textContent = others.length
           ? "Translating into " + others.map(function (l) { return l.native; }).join(", ")
           : "No translation languages configured yet";
+        // Said before the microphone opens, not after. A recording the
+        // speaker learns about later is a complaint; one they were told
+        // about first is a feature.
+        if (info.recording) {
+          el.subtitle.textContent += " · This session is being recorded.";
+        }
         show("start");
       })
       .catch(function (e) { fail(e.message); });

@@ -171,6 +171,19 @@ class SessionStore:
         )
         return billing
 
+    async def set_recording(self, session_id: str, on: bool) -> None:
+        """Flip the disclosure flag the speaker page reads. Tenant-scoped."""
+        await self._pool.execute(
+            f"""
+            UPDATE {self._schema}.translation_sessions
+            SET recording = $3
+            WHERE session_id = $1::uuid AND tenant_id = $2::uuid
+            """,
+            session_id,
+            self.tenant_id,
+            on,
+        )
+
     async def _update_status(self, session_id: str, status: str) -> None:
         result = await self._pool.execute(
             f"""
@@ -191,7 +204,8 @@ class SessionStore:
             SELECT session_id::text, tenant_id::text, event_name, room_name,
                    source_language, target_languages, status,
                    started_at, ended_at, failure_reason,
-                   billed_seconds, billed_language_count, latency_credible
+                   billed_seconds, billed_language_count, latency_credible,
+                   recording
               FROM {self._schema}.translation_sessions
              WHERE session_id = $1::uuid AND tenant_id = $2::uuid
             """,

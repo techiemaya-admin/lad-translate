@@ -321,6 +321,10 @@ def create_app(
             "event_name": session["event_name"],
             "status": session["status"],
             "languages": languages,
+            # Disclosure, not decoration: the speaker page shows a REC badge
+            # off this, and the listener page a line. asyncpg Records are
+            # mappings, so .get covers a row read before migration 003.
+            "recording": bool(session.get("recording", False)) if hasattr(session, "get") else False,
         }
 
     @app.get("/api/sessions/{session_id}")

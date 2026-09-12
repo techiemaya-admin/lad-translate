@@ -1,4 +1,4 @@
-# The console runs as ladtranslate and needs exactly three verbs on exactly one
+# The console runs as ladtranslate and needs exactly five verbs on exactly one
 # unit pattern. Installed to /etc/sudoers.d/lad-translate-console, mode 0440.
 #
 # Deliberately not "ALL": this account serves a web page, and the blast radius
@@ -8,3 +8,8 @@
 ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl restart lad-translate-session@*.service
 ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl stop lad-translate-session@*.service
 ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl start lad-translate-session@*.service
+# Recording is toggled with a signal rather than a restart, so a talk in
+# progress can be recorded from the moment the button is pressed. Two
+# signals, both idempotent in the session: USR1 starts, USR2 stops.
+ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl kill --signal=SIGUSR1 lad-translate-session@*.service
+ladtranslate ALL=(root) NOPASSWD: /usr/bin/systemctl kill --signal=SIGUSR2 lad-translate-session@*.service

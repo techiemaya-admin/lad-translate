@@ -35,6 +35,7 @@ to a room yet.
 | Hardware output config and operator API (`api/admin.py`, `db/outputs.py`) | Done, 48 tests |
 | Audio sink interface (`session/sinks.py`) | Done, 10 tests |
 | AES67 output (`session/aes67.py`, `tools/output_agent.py`) | Done, 17 tests against a loopback receiver; **not yet against a Dante device** |
+| Session recording (`session/recording.py`, console REC) | Done, 33 tests; aligned WAVs, disclosed on the speaker and listener pages |
 | Streaming STT adapter (FastConformer) | Runs on CPU (RTF 0.07, WER 2.7%). **Silero VAD added**; unproven through a full live talk |
 
 ## Measured on the dev Mac
@@ -1460,6 +1461,49 @@ it.
 the maximum across sinks. Handsets drifting while WebRTC is healthy is still an
 audience out of sync; summing would double-count one phrase and make
 `session/drift.py` skip far too eagerly.
+
+## Recording a session
+
+The speaker and every translation, as WAV files, from the console's REC button.
+
+    /var/lib/ladtranslate/recordings/<room>/<session_id>-<stamp>/
+        manifest.json     who, when, which files, at what rates
+        source.wav        the speaker, at the rate the room delivered (48 kHz)
+        fr.wav ar.wav …   one per language, at the voice's rate (22050)
+
+**Aligned, not concatenated.** Every track is written on the session's wall
+clock, with silence for the gaps, so all the files come out the same length
+and drop into any editor with French under English where it belongs. The
+alignment is by when a phrase was handed to playout, not when the audience
+heard it - a second or so earlier, more when the drift controller is working -
+so do not measure latency off these files.
+
+**The speaker is tapped before the backlog guard.** What the pipeline sheds
+when STT falls behind is gone from the translation and still in
+`source.wav`. The recording is the record of the talk, not of the pipeline's
+good day.
+
+**It survives a crash.** The WAV header is patched every five seconds and at
+every stop, so a process that dies mid-talk leaves files that open, missing
+at most the last few seconds.
+
+**How it is wired.** `session/recording.py` is an `AudioSink`, installed as a
+secondary of `FanOutSink` whenever the session has somewhere to write
+(`--record-dir`), armed or not. The console's REC button does two things at
+once: signals the running session (`SIGUSR1` starts, `SIGUSR2` stops; both
+idempotent) and sets `LAD_TRANSLATE_RECORD_FLAG` in `session.env` so the next
+start agrees. Each start is a new take in its own directory.
+
+**It is disclosed.** The session flips `translation_sessions.recording`
+(migration 003) and the join API carries it, so the speaker page says "This
+session is being recorded" before the microphone opens and the listener page
+says the same. A recording nobody was told about is the kind of thing a venue
+is sued over.
+
+**Files stay on the box** until deleted in the console's Recordings panel,
+which lists takes with sizes and free disk. An hour with three languages is
+roughly 350 MB of speaker plus 160 MB per language. Nothing uploads them
+anywhere yet.
 
 ## Listening without a phone
 

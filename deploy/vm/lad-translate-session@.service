@@ -39,7 +39,9 @@ ExecStart=/opt/lad-translate/.venv/bin/python tools/serve_session.py \
     --cpu-threads ${LAD_TRANSLATE_STT_THREADS} \
     --emit-interval ${LAD_TRANSLATE_EMIT_INTERVAL} \
     --window ${LAD_TRANSLATE_WINDOW} \
-    --wait ${LAD_TRANSLATE_WAIT}
+    --wait ${LAD_TRANSLATE_WAIT} \
+    --record-dir /var/lib/ladtranslate/recordings \
+    ${LAD_TRANSLATE_RECORD_FLAG}
 
 # Deliberately NOT Restart=always. The tool exits when the talk ends or the
 # idle cap is reached, and that is success. Restarting would open a fresh

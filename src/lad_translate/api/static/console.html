@@ -25,6 +25,9 @@
         <a href="#presets" class="nav-link" data-section="presets">
           <span class="nav-icon" aria-hidden="true">⚙</span> Presets
         </a>
+        <a href="#recordings" class="nav-link" data-section="recordings">
+          <span class="nav-icon" aria-hidden="true">●</span> Recordings
+        </a>
         <a href="#qr" class="nav-link" data-section="qr">
           <span class="nav-icon" aria-hidden="true">▦</span> QR codes
         </a>
@@ -143,6 +146,7 @@
                 <span class="led-item"><span class="led" id="led-run"></span>RUN</span>
                 <span class="led-item"><span class="led" id="led-wait"></span>WAIT</span>
                 <span class="led-item"><span class="led" id="led-drop"></span>DROP</span>
+                <span class="led-item"><span class="led" id="led-rec"></span>REC</span>
               </div>
               <button id="deck-apply" class="transport-btn apply" title="Apply the armed preset and fader overrides, then restart">
                 <span class="glyph">▶</span><span>APPLY</span>
@@ -150,8 +154,29 @@
               <button id="deck-stop" class="transport-btn stop" title="Stop the session">
                 <span class="glyph">■</span><span>STOP</span>
               </button>
+              <button id="deck-rec" class="transport-btn rec" aria-pressed="false"
+                      title="Record the speaker and every translation as aligned WAV files. Disclosed on the speaker and listener pages while on.">
+                <span class="glyph">●</span><span>REC</span>
+              </button>
             </div>
           </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="recordings" data-title="Recordings">
+          <div class="card-head">
+            <div>
+              <h2>Recordings <span id="recordings-pill" class="pill">…</span></h2>
+              <p class="muted">
+                The speaker and every translation, as WAV files on the same clock —
+                silence stands in for the gaps, so the tracks line up in any editor.
+                <strong>Recording is disclosed</strong> on the speaker and listener pages
+                while it is on. Files stay on this box until deleted here.
+              </p>
+            </div>
+            <span class="chip" id="recordings-disk">—</span>
+          </div>
+          <div id="takes" class="device-list"></div>
         </section>
 
         <!-- ============================================================ -->

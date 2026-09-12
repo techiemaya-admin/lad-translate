@@ -260,3 +260,59 @@ async def test_an_explicit_policy_overrides_the_table_through_the_session():
     await session.run()
     assert all(s == 1.0 for s in tts.speeds["fr"]), "French kept the default 1.5s"
     assert max(tts.speeds["de"]) > 1.0, "German was overridden to 0.8s"
+
+
+# --- recording ----------------------------------------------------------------
+
+
+async def test_a_recording_captures_the_speaker_and_every_language(tmp_path):
+    """
+    Through the real session: the recorder is a secondary sink for the
+    translations and a tap on the source frames upstream of the guard. Every
+    language file exists, and so does the speaker's, all readable as WAV.
+    """
+    import wave
+
+    from lad_translate.session.recording import RecordingSink
+    from lad_translate.session.sinks import FanOutSink
+
+    room = FakeRoom()
+    config = session_config()
+    recorder = RecordingSink(tmp_path, config.session_id, config.room_name, config.event_name)
+    session, *_ = build(room=room, config=config, sink=FanOutSink(room, recorder), recorder=recorder)
+    session.start_recording()
+    outcome = await session.run()
+    assert outcome.chunks > 0
+
+    take = next(tmp_path.rglob("manifest.json")).parent
+    for name in ("source.wav", "fr.wav", "de.wav"):
+        with wave.open(str(take / name), "rb") as w:
+            assert w.getnframes() > 0, f"{name} is empty"
+    assert recorder.active is False, "closing the session stops the take"
+    assert room.languages_published == ["fr", "de"], "the room still got its tracks"
+
+
+async def test_recording_can_start_and_stop_mid_session(tmp_path):
+    from lad_translate.session.recording import RecordingSink
+    from lad_translate.session.sinks import FanOutSink
+
+    room = FakeRoom()
+    config = session_config()
+    recorder = RecordingSink(tmp_path, config.session_id, config.room_name, config.event_name)
+    session, *_ = build(room=room, config=config, sink=FanOutSink(room, recorder), recorder=recorder)
+
+    async def toggle():
+        await asyncio.sleep(0.05)
+        session.start_recording()
+        await asyncio.sleep(0.2)
+        session.stop_recording()
+
+    await asyncio.gather(session.run(), toggle())
+    assert recorder.takes == 1
+    assert list(tmp_path.rglob("manifest.json")), "the take was written"
+
+
+async def test_without_a_recorder_the_toggles_are_harmless():
+    session, *_ = build()
+    assert session.start_recording() is None
+    assert session.stop_recording() is None
