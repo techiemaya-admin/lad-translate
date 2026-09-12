@@ -326,6 +326,10 @@ else
     log "  no database URL; skipping tenant migrations"
 fi
 
+# Recordings land here, written by the session and served by the console -
+# both run as ladtranslate, so no sudo is involved in reading them back.
+install -d -m 0750 -o ladtranslate -g ladtranslate /var/lib/ladtranslate/recordings
+
 systemctl daemon-reload
 systemctl enable --now livekit-server caddy lad-translate-console
 systemctl restart caddy lad-translate-console

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import signal
 import sys
 import uuid
 from pathlib import Path
@@ -38,7 +39,9 @@ from lad_translate.db.pool import control_schema
 from lad_translate.db.sessions import SessionStore
 from lad_translate.obs.log import configure, get_logger
 from lad_translate.session.pipeline import TranslationSession
+from lad_translate.session.recording import RecordingSink
 from lad_translate.session.room import TranslationRoom
+from lad_translate.session.sinks import FanOutSink
 
 log = get_logger("serve_session")
 
@@ -98,6 +101,10 @@ async def main() -> int:
     ap.add_argument("--cpu-threads", type=int, default=0)
     ap.add_argument("--emit-interval", type=float, default=3.0)
     ap.add_argument("--window", type=float, default=6.0)
+    ap.add_argument("--record-dir", type=Path, default=None,
+                    help="where recordings go; without it the session cannot record at all")
+    ap.add_argument("--record", action="store_true",
+                    help="start recording as soon as the session starts (needs --record-dir)")
     ap.add_argument("--wait", type=float, default=900.0,
                     help="seconds to wait for a speaker before giving up")
     args = ap.parse_args()
@@ -168,10 +175,27 @@ async def main() -> int:
     print(f"  listen    /s/{config.session_id}")
     print("\n  waiting for a speaker...\n", flush=True)
 
+    # A recorder is installed whenever there is somewhere to put files, armed
+    # or not, so the console can start a recording mid-talk with a signal
+    # rather than a restart. SIGUSR1 starts, SIGUSR2 stops; both idempotent,
+    # so the console can send "be recording" without knowing the state.
+    recorder = None
+    sink = None
+    if args.record_dir is not None:
+        recorder = RecordingSink(args.record_dir, config.session_id, args.room, args.event)
+        sink = FanOutSink(room, recorder)
+
     async with build_stt_backend(args) as stt, tts:
         session = TranslationSession(
-            config=config, room=room, stt=stt, mt=mt, tts=tts, store=store, max_lag_s=3.0
+            config=config, room=room, stt=stt, mt=mt, tts=tts, store=store, max_lag_s=3.0,
+            sink=sink, recorder=recorder,
         )
+        if recorder is not None:
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler(signal.SIGUSR1, session.start_recording)
+            loop.add_signal_handler(signal.SIGUSR2, session.stop_recording)
+            if args.record:
+                session.start_recording()
         outcome = await session.run()
 
     print(f"\n  status  {outcome.status}  chunks={outcome.chunks}")

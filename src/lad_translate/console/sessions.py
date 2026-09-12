@@ -54,6 +54,9 @@ class SessionStatus:
     latency_p50: float | None
     latency_max: float | None
     waiting_for_speaker: bool
+    recording: bool = False
+    recording_dir: str | None = None
+    recording_takes: int = 0
 
 
 async def _run(*args: str) -> tuple[int, str]:
@@ -78,6 +81,25 @@ async def stop(room: str) -> None:
     if code != 0:
         raise RuntimeError(f"systemctl stop failed: {out.strip()[:300]}")
     log.info("session stopped", extra={"room": room})
+
+
+async def record(room: str, on: bool) -> None:
+    """
+    Tell a running session to start or stop recording.
+
+    SIGUSR1 starts, SIGUSR2 stops - both idempotent in the session, so this
+    can say "be recording" without first asking whether it is. A session that
+    is not running is not an error here: the caller has already written the
+    env flag, so the next start will honour it.
+    """
+    validate_room(room)
+    sig = "SIGUSR1" if on else "SIGUSR2"
+    code, out = await _run(
+        "sudo", "-n", "systemctl", "kill", f"--signal={sig}", UNIT.format(room=room)
+    )
+    if code != 0 and "not loaded" not in out and "inactive" not in out:
+        raise RuntimeError(f"systemctl kill failed: {out.strip()[:300]}")
+    log.info("recording signalled", extra={"room": room, "on": on})
 
 
 async def status(room: str) -> SessionStatus:
@@ -109,6 +131,9 @@ def _summarise(room: str, active: bool, since: str | None, lines: list[str]) -> 
     dropped_s = 0.0
     latencies: list[float] = []
     waiting = False
+    recording = False
+    recording_dir = None
+    takes = 0
 
     for raw in lines:
         if "waiting for a speaker" in raw:
@@ -133,6 +158,11 @@ def _summarise(room: str, active: bool, since: str | None, lines: list[str]) -> 
             dropped_s = float(entry.get("total_seconds_dropped", dropped_s))
         elif message == "phrase skipped to recover playout drift":
             skips += 1
+        elif message == "recording started":
+            recording, recording_dir = True, entry.get("directory")
+            takes = int(entry.get("take", takes + 1))
+        elif message == "recording stopped":
+            recording = False
         elif message == "session created":
             session_id = entry.get("session_id") or session_id
         elif message.startswith("Whisper STT loaded"):
@@ -159,4 +189,7 @@ def _summarise(room: str, active: bool, since: str | None, lines: list[str]) -> 
         latency_p50=round(p50, 2) if p50 is not None else None,
         latency_max=round(worst, 2) if worst is not None else None,
         waiting_for_speaker=waiting and chunks == 0,
+        recording=recording and active,
+        recording_dir=recording_dir if (recording and active) else None,
+        recording_takes=takes,
     )

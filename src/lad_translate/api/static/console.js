@@ -49,6 +49,11 @@
     ledDrop: $("led-drop"),
     deckApply: $("deck-apply"),
     deckStop: $("deck-stop"),
+    deckRec: $("deck-rec"),
+    ledRec: $("led-rec"),
+    takes: $("takes"),
+    recPill: $("recordings-pill"),
+    recDisk: $("recordings-disk"),
     advanced: $("advanced-fields"),
     advancedChanges: $("advanced-changes"),
     toggle: $("toggle-advanced"),
@@ -375,10 +380,98 @@
     lcdDefault();
   }
 
+  var recordingWas = null;
+
   function setLeds(s) {
     el.ledRun.className = "led" + (s.active && !s.waiting_for_speaker ? " on" : "");
     el.ledWait.className = "led" + (s.active && s.waiting_for_speaker ? " warn" : "");
     el.ledDrop.className = "led" + (s.dropped_s > 0 ? " bad" : "");
+    var rec = !!s.recording;
+    el.ledRec.className = "led" + (rec ? " rec" : "");
+    el.deckRec.setAttribute("aria-pressed", String(rec));
+    el.deckRec.title = rec
+      ? "Recording to " + (s.recording_dir || "the recordings directory") + ". Press to stop."
+      : "Record the speaker and every translation as aligned WAV files. Disclosed on the speaker and listener pages while on.";
+    // A take that just ended is a new file to list.
+    if (recordingWas === true && !rec) loadRecordings();
+    recordingWas = rec;
+  }
+
+  // --- recordings ---------------------------------------------------------------
+
+  function fmtBytes(n) {
+    if (n === null || n === undefined) return "—";
+    if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+    if (n < 1024 * 1024 * 1024) return (n / 1048576).toFixed(1) + " MB";
+    return (n / 1073741824).toFixed(2) + " GB";
+  }
+
+  function fmtSeconds(sec) {
+    sec = Math.round(sec || 0);
+    var m = Math.floor(sec / 60), s2 = sec % 60;
+    return m + ":" + (s2 < 10 ? "0" : "") + s2;
+  }
+
+  function loadRecordings() {
+    if (!room()) return;
+    return api(BASE + "/api/recordings?room=" + encodeURIComponent(room())).then(function (r) {
+      el.takes.innerHTML = "";
+      el.recPill.textContent = r.takes.length ? r.takes.length + " take" + (r.takes.length === 1 ? "" : "s") : "none yet";
+      el.recPill.className = "pill " + (r.takes.length ? "on" : "");
+      el.recDisk.textContent = r.disk.free_bytes === null ? "disk —" : fmtBytes(r.disk.free_bytes) + " free";
+      el.recDisk.title = r.root;
+      if (!r.takes.length) {
+        el.takes.appendChild(h("p", "muted", "No recordings for this room. Press REC on the deck while a session is running."));
+        return;
+      }
+      r.takes.forEach(function (t) {
+        var card = h("div", "device take");
+        var head = h("h3", null, (t.started_at || t.name).replace("T", " ").replace(/\+00:00$/, " UTC"));
+        head.appendChild(h("span", "pill " + (t.in_progress ? "off" : ""), t.in_progress ? "recording" : "done"));
+        card.appendChild(head);
+        card.appendChild(h("p", "meta",
+          "session " + t.session_id.slice(0, 8) + " · " + fmtSeconds(t.seconds) + " · " + fmtBytes(t.bytes)));
+        var files = h("div", "files");
+        t.files.forEach(function (f) {
+          var a = h("a", "btn", f.name + " · " + fmtBytes(f.bytes));
+          a.href = BASE + "/api/recordings/" + encodeURIComponent(t.room) + "/" + encodeURIComponent(t.name) + "/" + encodeURIComponent(f.name);
+          a.setAttribute("download", "");
+          files.appendChild(a);
+        });
+        card.appendChild(files);
+        var actions = h("div", "actions");
+        var del = h("button", "small danger", "Delete take");
+        del.disabled = t.in_progress;
+        del.addEventListener("click", function () {
+          if (!window.confirm("Delete this recording (" + fmtBytes(t.bytes) + ")? This cannot be undone.")) return;
+          api(BASE + "/api/recordings/" + encodeURIComponent(t.room) + "/" + encodeURIComponent(t.name), { method: "DELETE" })
+            .then(function () { toast("Deleted.", "ok"); return loadRecordings(); })
+            .catch(function (err) { toast(err.message, true); });
+        });
+        actions.appendChild(del);
+        card.appendChild(actions);
+        el.takes.appendChild(card);
+      });
+    }).catch(function (err) {
+      el.recPill.textContent = "unavailable"; el.recPill.className = "pill off";
+      el.takes.innerHTML = ""; el.takes.appendChild(h("p", "muted", err.message));
+    });
+  }
+
+  function toggleRecording() {
+    var on = el.deckRec.getAttribute("aria-pressed") !== "true";
+    if (on && !window.confirm("Start recording " + room() + "? The speaker and listener pages will say the session is being recorded.")) return;
+    el.deckRec.disabled = true;
+    api(BASE + "/api/record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ room: room(), on: on })
+    }).then(function () {
+      toast(on ? "Recording. The pages now say so." : "Recording stopped.", "ok");
+      // The status poll flips the LED once the session logs it.
+      setTimeout(refreshStatus, 800);
+    }).catch(function (err) { toast(err.message, true); })
+      .then(function () { el.deckRec.disabled = false; });
   }
 
   // --- advanced ----------------------------------------------------------------
@@ -884,10 +977,11 @@
   el.stop.addEventListener("click", stop);
   el.deckApply.addEventListener("click", apply);
   el.deckStop.addEventListener("click", stop);
+  el.deckRec.addEventListener("click", toggleRecording);
   el.faderEmit.addEventListener("input", onFaderInput);
   el.faderWindow.addEventListener("input", onFaderInput);
   el.faderReset.addEventListener("click", fadersFollowArmed);
-  el.room.addEventListener("change", function () { refreshQr(); refreshStatus(); });
+  el.room.addEventListener("change", function () { refreshQr(); refreshStatus(); loadRecordings(); });
   el.addDevice.addEventListener("click", function () { openEditor(null); });
   el.cancelDevice.addEventListener("click", closeEditor);
   el.cancelDeviceX.addEventListener("click", closeEditor);
@@ -906,6 +1000,7 @@
   loadIdentity();
   load().then(refreshStatus).catch(function (err) { toast(err.message, true); });
   loadOutputs();
+  loadRecordings();
   watchSections();
   timer = setInterval(refreshStatus, 5000);
   window.addEventListener("beforeunload", function () { clearInterval(timer); });

@@ -32,6 +32,7 @@ EDITABLE = frozenset(
         "LAD_TRANSLATE_EMIT_INTERVAL",
         "LAD_TRANSLATE_WINDOW",
         "LAD_TRANSLATE_WAIT",
+        "LAD_TRANSLATE_RECORD_FLAG",
         "STT_BACKEND",
     }
 )

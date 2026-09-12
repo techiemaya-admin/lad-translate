@@ -30,6 +30,7 @@ from ..obs.latency import LatencyRecorder, Stage
 from ..obs.log import get_logger
 from .backpressure import BacklogGuard, guarded
 from .drift import DriftController, DriftPolicy
+from .recording import RecordingSink
 from .room import TranslationRoom
 from .sinks import AudioSink
 
@@ -150,6 +151,7 @@ class TranslationSession:
         drift_policies: dict[str, DriftPolicy] | None = None,
         max_lag_s: float = 3.0,
         sink: AudioSink | None = None,
+        recorder: RecordingSink | None = None,
     ) -> None:
         self.config = config
         self.room = room
@@ -157,6 +159,14 @@ class TranslationSession:
         self.mt = mt
         self.tts = tts
         self.store = store
+        # The recorder is also a sink - the caller puts it in the fan-out so
+        # it receives every phrase - and it is held here as well because two
+        # things reach it that a sink cannot see: the source audio, tapped
+        # before the backlog guard so a shed frame is still recorded, and the
+        # start/stop toggles. See session/recording.py. (self.recorder is the
+        # latency recorder in obs.latency and has been since the first commit;
+        # the two are unrelated and the name clash cost a red suite.)
+        self.recording_sink = recorder
         # Where synthesised speech goes. Defaults to the room, so a session
         # with no hardware output behaves exactly as before. `room` stays a
         # separate attribute because subscribing to the speaker's track is
@@ -258,7 +268,13 @@ class TranslationSession:
 
     async def _pump(self) -> None:
         """Drive audio through STT and the chunker until the source ends."""
-        frames = self._anchor_clock(guarded(self.room.source_frames(), self.guard))
+        source = self.room.source_frames()
+        if self.recording_sink is not None:
+            # Upstream of the guard on purpose: what the guard sheds when STT
+            # falls behind is gone from the translation and must not be gone
+            # from the recording. The file is the record of the talk.
+            source = self.recording_sink.tap(source)
+        frames = self._anchor_clock(guarded(source, self.guard))
 
         async for hypothesis in self.stt.transcribe(frames):
             if self._stop.is_set():
@@ -413,6 +429,40 @@ class TranslationSession:
                 "transcript write failed",
                 extra={"chunk_id": chunk.chunk_id, "language": language},
             )
+
+    # -------------------------------------------------------------------------
+
+    def start_recording(self) -> dict | None:
+        """Arm the recorder mid-session. No-op without one. Returns its state."""
+        if self.recording_sink is None:
+            log.warning("recording requested but this session has no recorder")
+            return None
+        self.recording_sink.start()
+        self._note_recording(True)
+        return self.recording_sink.summary()
+
+    def stop_recording(self) -> dict | None:
+        if self.recording_sink is None:
+            return None
+        summary = self.recording_sink.stop()
+        self._note_recording(False)
+        return summary
+
+    def _note_recording(self, on: bool) -> None:
+        # The row is what the speaker page reads to say "this session is
+        # being recorded". Written best-effort: a lost flag is a disclosure
+        # gap to fix, a dead session mid-keynote is not.
+        if self.store is None:
+            return
+        asyncio.get_running_loop().create_task(
+            self._store_recording(on), name="recording-flag"
+        )
+
+    async def _store_recording(self, on: bool) -> None:
+        try:
+            await self.store.set_recording(self.config.session_id, on)
+        except Exception:
+            log.exception("could not record the recording flag", extra={"recording": on})
 
     async def _shutdown(self) -> None:
         for worker in self._workers.values():

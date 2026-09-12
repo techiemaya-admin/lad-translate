@@ -22,7 +22,11 @@ log = get_logger(__name__)
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 CONTROL_MIGRATIONS = ("000_control_plane.sql",)
-TENANT_MIGRATIONS = ("001_translation_sessions.sql", "002_audio_outputs.sql")
+TENANT_MIGRATIONS = (
+    "001_translation_sessions.sql",
+    "002_audio_outputs.sql",
+    "003_session_recording.sql",
+)
 
 _LEDGER = """
 CREATE TABLE IF NOT EXISTS {schema}.applied_migrations (

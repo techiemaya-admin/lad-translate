@@ -98,7 +98,8 @@
       .then(function (data) {
         info = data;
         el.event.textContent = data.event_name || "Live Translation";
-        el.subtitle.textContent = "Choose a language to start listening";
+        el.subtitle.textContent = "Choose a language to start listening" +
+          (data.recording ? " · This session is being recorded." : "");
         renderLanguages(data.languages || []);
         show("picker");
       })

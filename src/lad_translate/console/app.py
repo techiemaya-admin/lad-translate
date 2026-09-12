@@ -23,14 +23,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..db.tenancy import TenantResolver
 from ..obs.log import get_logger
-from . import auth, env, outputs, sessions
+from . import auth, env, outputs, recordings, sessions
 from .presets import BY_KEY, PRESETS
 
 log = get_logger(__name__)
@@ -69,6 +69,11 @@ def build_id() -> str:
         return "unknown"
 
 
+class RecordRequest(BaseModel):
+    room: str = Field(min_length=1, max_length=63)
+    on: bool
+
+
 class ApplyRequest(BaseModel):
     room: str = Field(min_length=1, max_length=63)
     preset: str | None = None
@@ -84,6 +89,7 @@ def create_app(
     control_schema: str | None = None,
     tenant: str | None = None,
     pool=None,
+    recordings_root: Path | None = None,
 ) -> FastAPI:
     """
     `public_base` is the URL a PHONE reaches the join service on - the Cloud Run
@@ -130,6 +136,9 @@ def create_app(
     app.state.public_base = public_base.rstrip("/")
     app.state.env_path = env_path or env.DEFAULT_PATH
     app.state.build = build_id()
+    app.state.recordings_root = Path(
+        recordings_root or os.getenv("LAD_TRANSLATE_RECORD_DIR", "/var/lib/ladtranslate/recordings")
+    )
     # Built eagerly when a pool is handed in, for the same reason api/admin.py
     # does: a test client can drive the app without ever running the lifespan.
     app.state.outputs = outputs.OutputsConfig(
@@ -299,6 +308,72 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from exc
         return {"stopped": True}
+
+    @app.post(f"{PREFIX}/api/record")
+    async def record(body: RecordRequest, request: Request):
+        """
+        Start or stop recording: signal the running session AND set the flag
+        for the next one, so the two cannot disagree. The button is the
+        desired state; both channels carry it.
+        """
+        try:
+            sessions.validate_room(body.room)
+        except sessions.BadRoom as exc:
+            raise HTTPException(400, str(exc)) from exc
+        try:
+            env.write({"LAD_TRANSLATE_RECORD_FLAG": "--record" if body.on else ""}, app.state.env_path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        try:
+            await sessions.record(body.room, body.on)
+        except RuntimeError as exc:
+            raise HTTPException(500, str(exc)) from exc
+        log.info(
+            "console set recording",
+            extra={"room": body.room, "on": body.on, "operator": getattr(request.state, "email", None)},
+        )
+        return {"room": body.room, "on": body.on}
+
+    @app.get(f"{PREFIX}/api/recordings")
+    async def list_recordings(room: str = "dubai-demo"):
+        try:
+            takes = recordings.list_takes(app.state.recordings_root, room)
+        except sessions.BadRoom as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "room": room,
+            "root": str(app.state.recordings_root),
+            "takes": [t.as_dict() for t in takes],
+            "disk": recordings.disk(app.state.recordings_root),
+        }
+
+    @app.get(f"{PREFIX}/api/recordings/{{room}}/{{take}}/{{filename}}")
+    async def download_recording(room: str, take: str, filename: str):
+        try:
+            path = recordings.file_path(app.state.recordings_root, room, take, filename)
+        except (sessions.BadRoom, recordings.BadName) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError:
+            raise HTTPException(404, "no such recording file") from None
+        media = "application/json" if filename.endswith(".json") else "audio/wav"
+        return FileResponse(
+            path, media_type=media, filename=f"{room}-{take[:8]}-{filename}",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.delete(f"{PREFIX}/api/recordings/{{room}}/{{take}}", status_code=204)
+    async def delete_recording(room: str, take: str, request: Request):
+        try:
+            recordings.delete_take(app.state.recordings_root, room, take)
+        except (sessions.BadRoom, recordings.BadName) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError:
+            raise HTTPException(404, "no such recording") from None
+        log.info(
+            "console deleted recording",
+            extra={"room": room, "take": take, "operator": getattr(request.state, "email", None)},
+        )
+        return Response(status_code=204)
 
     def _qr_png(url: str) -> bytes:
         import qrcode
