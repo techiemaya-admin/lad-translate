@@ -682,7 +682,9 @@
         var blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
         var a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = d.name.replace(/[^\w.-]+/g, "-").toLowerCase() + ".json";
+        // "Mac - AVC" -> mac-avc.json, not mac---avc.json: one dash per run
+        // of anything that is not a word character.
+        a.download = d.name.replace(/[^\w.]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() + ".json";
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
       });
