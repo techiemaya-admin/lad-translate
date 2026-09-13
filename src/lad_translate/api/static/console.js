@@ -57,6 +57,11 @@
     trState: $("tr-state"),
     trFollow: $("tr-follow"),
     trCopy: $("tr-copy"),
+    trSession: $("tr-session"),
+    trFormat: $("tr-format"),
+    trLanguage: $("tr-language"),
+    trDownload: $("tr-download"),
+    trDownloadNote: $("tr-download-note"),
     recPill: $("recordings-pill"),
     recDisk: $("recordings-disk"),
     advanced: $("advanced-fields"),
@@ -470,7 +475,10 @@
       .then(function (t) {
         // A different session means a restart: start the panel again rather
         // than appending this talk to the last one.
-        if (t.session_id && trSession && t.session_id !== trSession) trReset();
+        if (t.session_id && trSession && t.session_id !== trSession) {
+          trReset();
+          loadTranscriptSessions();   // a restart is a new session to offer
+        }
         trSession = t.session_id;
 
         if (t.reason) {
@@ -506,6 +514,80 @@
         el.trState.textContent = err.message;
         el.trState.hidden = false;
       });
+  }
+
+  // --- downloading a whole session -----------------------------------------------
+
+  var trSessions = [];
+
+  function loadTranscriptSessions() {
+    if (!room()) return;
+    return api(BASE + "/api/transcript/sessions?room=" + encodeURIComponent(room()))
+      .then(function (r) {
+        trSessions = r.sessions || [];
+        var keep = el.trSession.value;
+        el.trSession.innerHTML = "";
+        if (!trSessions.length) {
+          var none = document.createElement("option");
+          none.textContent = r.reason || "no sessions in this room";
+          none.value = "";
+          el.trSession.appendChild(none);
+          el.trDownload.disabled = true;
+          return;
+        }
+        el.trDownload.disabled = false;
+        trSessions.forEach(function (sn, i) {
+          var opt = document.createElement("option");
+          opt.value = sn.session_id;
+          var when = sn.started_at.replace("T", " ").slice(0, 16);
+          opt.textContent = when + "  " + (sn.status === "live" ? "· live" : "")
+            + (i === 0 && sn.status !== "live" ? " · latest" : "");
+          el.trSession.appendChild(opt);
+        });
+        if (keep) el.trSession.value = keep;
+        updateDownloadControls();
+      })
+      .catch(function () { /* the panel's own state line already says why */ });
+  }
+
+  function updateDownloadControls() {
+    var fmt = el.trFormat.value;
+    var subtitles = fmt === "srt" || fmt === "vtt";
+    el.trLanguage.hidden = !subtitles;
+    if (subtitles) {
+      var chosen = trSessions.filter(function (s) { return s.session_id === el.trSession.value; })[0];
+      var langs = (chosen && chosen.languages) || [];
+      var keep = el.trLanguage.value;
+      el.trLanguage.innerHTML = "";
+      // "source" first: a producer cutting the original wants the speaker's
+      // own words on the same timings, and exporting that from somewhere
+      // else would be silly.
+      var src = document.createElement("option");
+      src.value = "source"; src.textContent = "the speaker (source)";
+      el.trLanguage.appendChild(src);
+      langs.forEach(function (code) {
+        var opt = document.createElement("option");
+        opt.value = code; opt.textContent = languageName(code) + " (" + code + ")";
+        el.trLanguage.appendChild(opt);
+      });
+      if (keep) el.trLanguage.value = keep;
+    }
+    el.trDownloadNote.textContent = subtitles
+      ? "Subtitle times are positions in the speaker's audio: they line up with source.wav in a recording, not with the translated tracks."
+      : "";
+  }
+
+  function downloadTranscript() {
+    var q = "?room=" + encodeURIComponent(room()) + "&fmt=" + encodeURIComponent(el.trFormat.value);
+    if (el.trSession.value) q += "&session_id=" + encodeURIComponent(el.trSession.value);
+    if (!el.trLanguage.hidden && el.trLanguage.value) {
+      q += "&language=" + encodeURIComponent(el.trLanguage.value);
+    }
+    // A navigation, so the cookie rides along and the browser saves the file.
+    var a = document.createElement("a");
+    a.href = BASE + "/api/transcript/download" + q;
+    a.setAttribute("download", "");
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 
   function copyTranscript() {
@@ -1126,9 +1208,13 @@
   el.faderWindow.addEventListener("input", onFaderInput);
   el.faderReset.addEventListener("click", fadersFollowArmed);
   el.room.addEventListener("change", function () {
-    refreshQr(); refreshStatus(); loadRecordings(); trReset(); loadTranscript();
+    refreshQr(); refreshStatus(); loadRecordings(); trReset();
+    loadTranscript(); loadTranscriptSessions();
   });
   el.trCopy.addEventListener("click", copyTranscript);
+  el.trFormat.addEventListener("change", updateDownloadControls);
+  el.trSession.addEventListener("change", updateDownloadControls);
+  el.trDownload.addEventListener("click", downloadTranscript);
   el.addDevice.addEventListener("click", function () { openEditor(null); });
   el.cancelDevice.addEventListener("click", closeEditor);
   el.cancelDeviceX.addEventListener("click", closeEditor);
@@ -1149,6 +1235,7 @@
   loadOutputs();
   loadRecordings();
   loadTranscript();
+  loadTranscriptSessions();
   watchSections();
   timer = setInterval(refreshStatus, 5000);
   // Faster than the status poll: a phrase the operator is reading along with

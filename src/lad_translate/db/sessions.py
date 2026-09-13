@@ -352,6 +352,44 @@ class SessionStore:
         )
         return list(reversed(rows))
 
+    async def full_transcript(self, session_id: str) -> list:
+        """
+        Every row of a session, in order, for a download.
+
+        Unbounded on purpose, and deliberately separate from
+        recent_transcript: that one keeps the NEWEST rows under a limit,
+        which is right for a console tailing a talk and exactly wrong for a
+        download, where truncating means losing the beginning of the keynote
+        rather than the end.
+        """
+        return await self._pool.fetch(
+            f"""
+            SELECT chunk_id, language, source_text, translated_text,
+                   t_audio_start, t_audio_end, latency_s, created_at
+              FROM {self._schema}.session_transcripts
+             WHERE tenant_id = $1::uuid AND session_id = $2::uuid
+             ORDER BY chunk_id, language
+            """,
+            self.tenant_id,
+            session_id,
+        )
+
+    async def sessions_in_room(self, room: str, limit: int = 20) -> list:
+        """Recent sessions in a room, newest first, for picking one to download."""
+        return await self._pool.fetch(
+            f"""
+            SELECT session_id::text, event_name, status, started_at, ended_at,
+                   target_languages
+              FROM {self._schema}.translation_sessions
+             WHERE tenant_id = $1::uuid AND room_name = $2
+             ORDER BY started_at DESC
+             LIMIT $3
+            """,
+            self.tenant_id,
+            room,
+            limit,
+        )
+
     async def transcript(self, session_id: str, language: str) -> list:
         return await self._pool.fetch(
             f"""
