@@ -112,6 +112,20 @@
           </div>
           <p class="alert warn" id="tr-state" hidden></p>
           <div id="tr-lines" class="transcript"></div>
+
+          <div class="download-row">
+            <span class="deck-label">DOWNLOAD</span>
+            <select id="tr-session" aria-label="Session to download"></select>
+            <select id="tr-format" aria-label="Format">
+              <option value="txt">Text — everything, readable</option>
+              <option value="json">JSON — timings and latencies</option>
+              <option value="srt">SRT — subtitles</option>
+              <option value="vtt">WebVTT — subtitles for the web</option>
+            </select>
+            <select id="tr-language" aria-label="Subtitle language" hidden></select>
+            <button id="tr-download" class="primary small">Download</button>
+            <span class="muted" id="tr-download-note"></span>
+          </div>
         </section>
 
         <!-- ============================================================ -->

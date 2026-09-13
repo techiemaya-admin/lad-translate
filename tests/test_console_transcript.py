@@ -195,3 +195,110 @@ async def test_it_reads_a_real_session_and_honours_the_high_water_mark(env_file:
         await pool.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         await pool.execute(f"DELETE FROM {CONTROL}.tenants WHERE id = $1::uuid", tenant_id)
         await pool.close()
+
+
+# --- the whole session, as a file --------------------------------------------
+
+
+def a_row(chunk_id, language, source, translated, start, end, latency=1.0):
+    return {
+        "chunk_id": chunk_id, "language": language, "source_text": source,
+        "translated_text": translated, "t_audio_start": start, "t_audio_end": end,
+        "latency_s": latency, "created_at": None,
+    }
+
+
+SESSION = {
+    "session_id": "abc-123", "room_name": "dubai-demo", "event_name": "Keynote",
+    "status": "ended", "started_at": "2026-09-13 08:00:00+00:00", "ended_at": None,
+}
+ROWS = [
+    a_row(0, "ar", "Good morning", "صباح الخير", 0.0, 2.5, 1.4),
+    a_row(0, "fr", "Good morning", "Bonjour", 0.0, 2.5, 1.2),
+    a_row(1, "fr", "Welcome to Dubai", "Bienvenue à Dubaï", 3.0, 3.0, 0.9),
+    a_row(1, "ar", "Welcome to Dubai", None, 3.0, 3.0, None),
+]
+
+
+def test_text_carries_the_source_and_every_language():
+    from lad_translate.console import exports
+
+    body, media, name = exports.render(SESSION, ROWS, "txt", None)
+    assert media.startswith("text/plain")
+    assert name.endswith(".txt") and "dubai-demo" in name
+    assert "Keynote" in body and "Arabic (ar)" in body and "French (fr)" in body
+    assert "Good morning" in body and "Bonjour" in body and "صباح الخير" in body
+    # A language that produced nothing says so rather than vanishing.
+    assert "- no translation" in body
+
+
+def test_an_empty_session_says_so_rather_than_downloading_a_blank_file():
+    from lad_translate.console import exports
+
+    body, _, _ = exports.render(SESSION, [], "txt", None)
+    assert "produced no transcript" in body
+
+
+def test_json_keeps_the_timings_and_latencies():
+    import json as _json
+
+    from lad_translate.console import exports
+
+    body, media, name = exports.render(SESSION, ROWS, "json", None)
+    assert media.startswith("application/json") and name.endswith(".json")
+    data = _json.loads(body)
+    assert data["session_id"] == "abc-123" and data["room"] == "dubai-demo"
+    assert [c["chunk_id"] for c in data["chunks"]] == [0, 1]
+    assert data["chunks"][0]["languages"]["fr"]["latency_s"] == 1.2
+    assert data["chunks"][0]["start"] == 0.0 and data["chunks"][0]["end"] == 2.5
+    assert "source.wav" in data["timing"], "the clock it lines up with has to be stated"
+
+
+def test_srt_is_numbered_comma_timed_and_skips_what_was_never_translated():
+    from lad_translate.console import exports
+
+    body, media, name = exports.render(SESSION, ROWS, "srt", "ar")
+    assert media.startswith("application/x-subrip") and name.endswith("-ar.srt")
+    assert body.startswith("1\n00:00:00,000 --> 00:00:02,500\nصباح الخير")
+    # Chunk 1 has no Arabic, so there is exactly one cue and no empty one.
+    assert body.count("-->") == 1
+
+
+def test_vtt_has_the_header_and_dot_timings():
+    from lad_translate.console import exports
+
+    body, media, name = exports.render(SESSION, ROWS, "vtt", "fr")
+    assert media.startswith("text/vtt") and name.endswith("-fr.vtt")
+    assert body.startswith("WEBVTT")
+    assert "00:00:00.000 --> 00:00:02.500" in body
+    assert "," not in body.split("-->")[0][-14:], "VTT uses dots, not commas"
+
+
+def test_subtitles_can_be_the_speaker_themselves():
+    from lad_translate.console import exports
+
+    body, _, name = exports.render(SESSION, ROWS, "srt", "source")
+    assert "Good morning" in body and "Welcome to Dubai" in body
+    assert name.endswith("-source.srt")
+
+
+def test_a_zero_length_chunk_still_makes_a_visible_cue():
+    """A cue that starts and ends together is one no player shows."""
+    from lad_translate.console import exports
+
+    body = exports.as_subtitles(ROWS, "fr")
+    second = body.split("\n\n")[1]
+    assert "00:00:03,000 --> 00:00:03,500" in second
+
+
+def test_an_unknown_format_is_refused(env_file: Path):
+    client = signed_in(TestClient(create_app(public_base=PUBLIC, env_path=env_file, auth_config=AUTH)))
+    r = client.get("/console/api/transcript/download", params={"room": "hall-a", "fmt": "docx"})
+    assert r.status_code == 400
+
+
+def test_downloads_need_a_signed_in_operator(env_file: Path):
+    """A transcript is the content of someone's talk."""
+    anonymous = TestClient(create_app(public_base=PUBLIC, env_path=env_file, auth_config=AUTH))
+    assert anonymous.get("/console/api/transcript/download").status_code == 401
+    assert anonymous.get("/console/api/transcript/sessions").status_code == 401

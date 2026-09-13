@@ -448,3 +448,11 @@ button[disabled] { opacity: .5; cursor: not-allowed; }
 .tr-missing { color: var(--bad); font-style: italic; }
 .check.follow { display: inline-flex; align-items: center; gap: .4rem; color: var(--dim); font-size: .82rem; }
 
+.download-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  margin-top: .8rem; padding-top: .8rem; border-top: 1px solid var(--line);
+}
+.download-row .deck-label { border: 0; padding: 0; }
+.download-row select { max-width: 22rem; }
+.download-row .muted { font-size: .78rem; flex-basis: 100%; }
+

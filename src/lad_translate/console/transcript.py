@@ -24,11 +24,12 @@ is how a console becomes the reason a box is busy.
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 
 from ..db.sessions import SessionStore
 from ..db.tenancy import SchemaError
 from ..obs.log import get_logger
-from . import sessions
+from . import exports, sessions
 
 log = get_logger(__name__)
 
@@ -125,3 +126,106 @@ def install(app: FastAPI, prefix: str) -> None:
 
         shell["chunks"] = group_by_chunk(rows)
         return shell
+
+    @app.get(f"{prefix}/api/transcript/sessions")
+    async def transcript_sessions(request: Request, room: str = "dubai-demo"):
+        """
+        What there is to download in this room, newest first.
+
+        The live panel follows the newest session. A download usually wants
+        that one too, but not always: the talk worth sending to a client is
+        often the one that finished an hour ago.
+        """
+        try:
+            sessions.validate_room(room)
+        except sessions.BadRoom as exc:
+            raise HTTPException(400, str(exc)) from exc
+        cfg = request.app.state.outputs
+        if not cfg.configured:
+            return {"room": room, "sessions": [], "reason": cfg.why_not}
+        try:
+            tenant = await cfg.tenant()
+        except SchemaError as exc:
+            return {"room": room, "sessions": [], "reason": str(exc)}
+        store = SessionStore(cfg.pool, tenant)
+        rows = await store.sessions_in_room(room)
+        return {
+            "room": room,
+            "reason": "",
+            "sessions": [
+                {
+                    "session_id": r["session_id"],
+                    "event_name": r["event_name"],
+                    "status": r["status"],
+                    "started_at": str(r["started_at"]),
+                    "ended_at": str(r["ended_at"]) if r["ended_at"] else None,
+                    "languages": list(r["target_languages"] or []),
+                }
+                for r in rows
+            ],
+        }
+
+    @app.get(f"{prefix}/api/transcript/download")
+    async def download(
+        request: Request,
+        room: str = "dubai-demo",
+        fmt: str = "txt",
+        language: str | None = None,
+        session_id: str | None = None,
+    ):
+        """
+        The whole session, as a file.
+
+        Unbounded, unlike the live panel: truncating a download loses the
+        beginning of the keynote, which is the part a client reads first.
+        """
+        try:
+            sessions.validate_room(room)
+        except sessions.BadRoom as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if fmt not in exports.FORMATS:
+            raise HTTPException(400, f"format must be one of {', '.join(exports.FORMATS)}")
+
+        cfg = request.app.state.outputs
+        if not cfg.configured:
+            raise HTTPException(503, cfg.why_not)
+        try:
+            tenant = await cfg.tenant()
+        except SchemaError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+        store = SessionStore(cfg.pool, tenant)
+        if session_id:
+            session = await store.get_session(session_id)
+            # Scoped by room as well as id: a session id from another room is
+            # a mistake, and answering it would quietly hand over a different
+            # talk than the one the operator is looking at.
+            if session is None or session["room_name"] != room:
+                raise HTTPException(404, "no such session in this room")
+            session = dict(session)
+        else:
+            session = await store.newest_session_in_room(room)
+            if session is None:
+                raise HTTPException(404, f"no session has run in {room} yet")
+            session["room_name"] = room
+
+        rows = await store.full_transcript(session["session_id"])
+        body, media, filename = exports.render(session, rows, fmt, language)
+        log.info(
+            "transcript exported",
+            extra={
+                "operator": getattr(request.state, "email", None),
+                "session_id": session["session_id"],
+                "format": fmt,
+                "language": language,
+                "chunks": len({r["chunk_id"] for r in rows}),
+            },
+        )
+        return Response(
+            content=body,
+            media_type=media,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
