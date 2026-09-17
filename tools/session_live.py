@@ -19,6 +19,7 @@ Start the server first:
 Usage:
     python tools/session_live.py --targets fr
     python tools/session_live.py --targets fr,de --audio fixtures/keynote.wav
+    python tools/session_live.py --targets fr --stt fastconformer
 """
 
 from __future__ import annotations
@@ -37,7 +38,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from lad_translate.adapters.mt_routing import RoutingMtAdapter
-from lad_translate.adapters.stt_whisper import WhisperSttAdapter
 from lad_translate.adapters.tts_piper import DEFAULT_VOICES, PiperTtsAdapter
 from lad_translate.api.tokens import TokenIssuer
 from lad_translate.config import (
@@ -173,11 +173,66 @@ async def listener(url: str, token: str, language: str, out: Path, stop: asyncio
     return seconds
 
 
+def build_stt_backend(args):
+    """
+    Construct the STT backend named by --stt. Mirrors tools/e2e.py; the two
+    have to agree or a session behaves differently from the check that passed.
+
+    The backends take different options because they are different shapes.
+    Whisper re-transcribes a sliding buffer, so it needs a window and an emit
+    interval; a streaming transducer has neither - it encodes each step once
+    and carries context in a cache tensor - and takes a lookahead instead.
+    --window and --emit-interval are therefore IGNORED for fastconformer, and
+    --lookahead is ignored for whisper, which is why the effective settings
+    are printed rather than left to be assumed.
+
+    The chunker is not configured here: pipeline.py drops agreement_n to 1 by
+    itself for a backend whose revises_hypotheses is False, which an RNNT's is.
+    """
+    from lad_translate.adapters.registry import build_stt
+
+    if args.stt == "fastconformer":
+        return build_stt(
+            "fastconformer",
+            lookahead=args.lookahead,
+            # None lets the adapter choose, which on Apple silicon means mps -
+            # where this model is roughly 4x faster than on the same machine's
+            # cpu, and where the two tightest lookaheads become usable at all.
+            device=None if args.device == "auto" else args.device,
+            vad=args.vad,
+        )
+    if args.device == "mps":
+        raise SystemExit(
+            "  faster-whisper runs on CTranslate2, which has no mps backend.\n"
+            "  Use --device cpu, or --stt fastconformer to use the GPU."
+        )
+    return build_stt(
+        "faster-whisper",
+        model_size=args.model,
+        device="cpu" if args.device == "auto" else args.device,
+        emit_interval=args.emit_interval,
+        max_window_s=args.window,
+    )
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--audio", type=Path, default=ROOT / "fixtures" / "keynote.wav")
     ap.add_argument("--targets", default="fr")
-    ap.add_argument("--model", default="tiny")
+    ap.add_argument("--model", default="tiny", help="faster-whisper only")
+    ap.add_argument("--stt", default=os.getenv("STT_BACKEND", "faster-whisper"),
+                    choices=["faster-whisper", "fastconformer"],
+                    help="fastconformer is the streaming transducer: no sliding "
+                         "window, so none of the per-window cuts that cost about "
+                         "a word each (see stt_whisper.max_window_s)")
+    ap.add_argument("--lookahead", default="480ms",
+                    help="fastconformer only: 0ms 80ms 480ms 1040ms")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"],
+                    help="auto picks cuda, then mps, then cpu")
+    ap.add_argument("--vad", dest="vad", action="store_true", default=True,
+                    help="fastconformer only; on by default, it makes words out "
+                         "of room tone without one")
+    ap.add_argument("--no-vad", dest="vad", action="store_false")
     ap.add_argument("--tenant", default="techiemaya")
     ap.add_argument("--emit-interval", type=float, default=3.0,
                     help="must exceed window_s * RTF or the backlog grows without bound")
@@ -211,7 +266,15 @@ async def main() -> int:
     )
 
     print(f"\nroom       {args.room}")
-    print(f"targets    {', '.join(targets)}\n")
+    print(f"targets    {', '.join(targets)}")
+    if args.stt == "fastconformer":
+        print(f"stt        fastconformer  lookahead {args.lookahead}  "
+              f"device {args.device}  vad {'on' if args.vad else 'off'}")
+    else:
+        print(f"stt        faster-whisper {args.model}  window {args.window}s  "
+              f"emit {args.emit_interval}s  device "
+              f"{'cpu' if args.device == 'auto' else args.device}")
+    print()
 
     # Persist transcripts. The session data model exists and is tested, and
     # without this the only record of what the audience heard is the audio
@@ -271,12 +334,13 @@ async def main() -> int:
     started = time.monotonic()
     # Load the STT model BEFORE the publisher starts.
     #
-    # Whisper small takes about 32 seconds to load on this machine. Starting
+    # Whisper small takes about 32 seconds to load on this machine, and
+    # FastConformer's weights are a download on first use. Starting
     # the publisher first means that much speech streams into the room with
     # nothing subscribed to catch it: the SFU does not hold it for a
     # subscriber that has not arrived, so it is gone. On a 45 second clip
     # that silently discards most of the test.
-    async with WhisperSttAdapter(model_size=args.model, emit_interval=args.emit_interval, max_window_s=args.window) as stt, tts:
+    async with build_stt_backend(args) as stt, tts:
         pub_task = asyncio.create_task(
             venue_publisher(
                 url, issuer.for_publisher(args.room), args.audio,
