@@ -22,9 +22,11 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 
+from .. import corrections as corrections_module
 from ..adapters.base import MtAdapter, SttAdapter, TtsAdapter, VoiceSpec
 from ..chunker import PhraseChunk, PhraseChunker
 from ..config import SessionConfig
+from ..db.corrections import CorrectionStore
 from ..db.sessions import SessionStore, TranscriptRow
 from ..obs.latency import LatencyRecorder, Stage
 from ..obs.log import get_logger
@@ -152,6 +154,7 @@ class TranslationSession:
         max_lag_s: float = 3.0,
         sink: AudioSink | None = None,
         recorder: RecordingSink | None = None,
+        corrections: CorrectionStore | None = None,
     ) -> None:
         self.config = config
         self.room = room
@@ -159,6 +162,18 @@ class TranslationSession:
         self.mt = mt
         self.tts = tts
         self.store = store
+
+        self.corrections_store = corrections
+        """
+        Where operator corrections are read from, or None for no glossary.
+
+        Held as the STORE rather than a fixed rule set because the rules are
+        reloaded while the session runs - see _reload_corrections. A name
+        found wrong in the first minute of a talk has to be right for the
+        remaining fifty-nine, and restarting the session to pick it up would
+        cost the audience the audio in flight.
+        """
+        self._corrections = corrections_module.EMPTY
         # The recorder is also a sink - the caller puts it in the fan-out so
         # it receives every phrase - and it is held here as well because two
         # things reach it that a sink cannot see: the source audio, tapped
@@ -357,11 +372,28 @@ class TranslationSession:
         if chunk.revised_after_commit:
             self.recorder.record_revision(chunk.chunk_id)
 
-        translations = await self.mt.translate_many(
-            chunk.text, self.config.source_language, targets
-        )
+        # Correct the SOURCE first, so every target is translated from the
+        # right words and the stored transcript reads correctly. Doing it here
+        # rather than once per language is the whole reason a source rule is
+        # worth more than a target one: a misheard name is fixed once.
+        source = self.config.source_language
+        corrected, hits = self._corrections.apply(chunk.text, source)
+        if hits:
+            chunk = dataclasses.replace(chunk, text=corrected)
+            log.info("source corrected", extra={"chunk_id": chunk.chunk_id, "words": hits})
+
+        translations = await self.mt.translate_many(chunk.text, source, targets)
         now = time.monotonic()
         for language, text in translations.items():
+            # And per language, for when the source was right and one target
+            # got it wrong.
+            text, per_language = self._corrections.apply(text, language)
+            if per_language:
+                log.info(
+                    "translation corrected",
+                    extra={"chunk_id": chunk.chunk_id, "lang": language,
+                           "words": per_language},
+                )
             self.recorder.mark(chunk.chunk_id, language, Stage.TRANSLATED, now)
             self._workers[language].submit(chunk, text)
 
@@ -379,6 +411,7 @@ class TranslationSession:
         warned_duration = False
         while not self._stop.is_set():
             await asyncio.sleep(5.0)
+            await self._reload_corrections()
             now = time.monotonic()
             elapsed = now - self._started_at
             idle = now - self._last_audio_at
@@ -398,6 +431,33 @@ class TranslationSession:
                 log.warning(
                     "session approaching duration cap",
                     extra={"elapsed_s": round(elapsed), "cap_s": limits.max_duration_s},
+                )
+
+    async def _reload_corrections(self) -> None:
+        """
+        Pick up glossary changes without a restart.
+
+        On the watchdog's tick because a session already has one and a second
+        timer for a single indexed SELECT is not worth its lifecycle. Five
+        seconds is the responsiveness an operator correcting a name mid-talk
+        needs.
+
+        NEVER fatal. A glossary is an improvement to the words, not a
+        precondition for them: if the database is unreachable the session
+        keeps translating with whatever rules it last had, and says so once
+        rather than every five seconds for an hour.
+        """
+        if self.corrections_store is None:
+            return
+        try:
+            self._corrections = await self.corrections_store.load(self.config.room_name)
+            self._corrections_failing = False
+        except Exception as exc:  # noqa: BLE001 - a glossary is never fatal
+            if not getattr(self, "_corrections_failing", False):
+                self._corrections_failing = True
+                log.warning(
+                    "could not reload corrections; keeping the current set",
+                    extra={"error": str(exc)[:200]},
                 )
 
     # -------------------------------------------------------------------------

@@ -46,6 +46,7 @@ from lad_translate.config import (
     SessionLimits,
     TenantContext,
 )
+from lad_translate.db.corrections import CorrectionStore
 from lad_translate.db.pool import control_schema
 from lad_translate.db.sessions import SessionStore
 from lad_translate.obs.log import configure, get_logger
@@ -358,7 +359,10 @@ async def main() -> int:
         )
         session = TranslationSession(
             config=config, room=room, stt=stt, mt=mt, tts=tts,
-            store=store, max_lag_s=3.0
+            store=store, max_lag_s=3.0,
+            # Operator corrections, reloaded while the session runs. None when
+            # there is no database, which is the --no-store case.
+            corrections=CorrectionStore(pool, config.tenant) if store is not None else None,
         )
         outcome = await session.run()
 

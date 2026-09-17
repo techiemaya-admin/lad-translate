@@ -25,6 +25,9 @@
         <a href="#transcript" class="nav-link" data-section="transcript">
           <span class="nav-icon" aria-hidden="true">❝</span> Transcript
         </a>
+        <a href="#corrections" class="nav-link" data-section="corrections">
+          <span class="nav-icon" aria-hidden="true">✎</span> Corrections
+        </a>
         <a href="#presets" class="nav-link" data-section="presets">
           <span class="nav-icon" aria-hidden="true">⚙</span> Presets
         </a>
@@ -107,6 +110,7 @@
             </div>
             <div class="actions">
               <label class="check follow"><input id="tr-follow" type="checkbox" checked> Follow</label>
+              <button id="tr-fix" class="ghost small" title="Select a wrong word above, then click this">Correct selection</button>
               <button id="tr-copy" class="ghost small">Copy all</button>
             </div>
           </div>
@@ -125,6 +129,62 @@
             <select id="tr-language" aria-label="Subtitle language" hidden></select>
             <button id="tr-download" class="primary small">Download</button>
             <span class="muted" id="tr-download-note"></span>
+          </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="corrections" data-title="Corrections">
+          <div class="card-head">
+            <div>
+              <h2>Corrections <span id="cx-pill" class="pill">…</span></h2>
+              <p class="muted">
+                A recogniser gets a name wrong the <em>same way every time</em>, so a
+                correction here changes the <strong>next</strong> phrase, not just the last
+                one — it takes effect within about five seconds, with no restart and no
+                audio lost. Correcting the <strong>source</strong> fixes every language at
+                once; correct a single language only when the English was already right.
+              </p>
+            </div>
+          </div>
+
+          <form id="cx-form" class="cx-form">
+            <label class="cx-field">
+              <span>Heard as</span>
+              <input id="cx-wrong" maxlength="200" placeholder="I can Adler" required>
+            </label>
+            <span class="cx-arrow" aria-hidden="true">→</span>
+            <label class="cx-field">
+              <span>Should be</span>
+              <input id="cx-right" maxlength="200" placeholder="Irene Adler">
+            </label>
+            <label class="cx-field">
+              <span>Applies to</span>
+              <select id="cx-language"></select>
+            </label>
+            <label class="cx-field">
+              <span>Scope</span>
+              <select id="cx-scope">
+                <option value="room">This room only</option>
+                <option value="everywhere">Every room</option>
+              </select>
+            </label>
+            <button type="submit" class="primary small">Add</button>
+          </form>
+          <p class="muted cx-note">
+            Whole words only, matched whatever the casing — “ad” will never rewrite
+            “Adler”. Leave <em>Should be</em> empty to delete a word entirely.
+          </p>
+
+          <p class="alert warn" id="cx-state" hidden></p>
+          <div id="cx-list" class="device-list"></div>
+
+          <div class="download-row">
+            <span class="deck-label">RECORD</span>
+            <button id="cx-replay" class="ghost small">Apply to the stored transcript</button>
+            <span class="muted" id="cx-replay-note">
+              Rewrites what this room’s newest session already saved, so the panel and the
+              downloads match. It cannot un-say audio the audience already heard.
+            </span>
           </div>
         </section>
 

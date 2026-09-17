@@ -456,3 +456,30 @@ button[disabled] { opacity: .5; cursor: not-allowed; }
 .download-row select { max-width: 22rem; }
 .download-row .muted { font-size: .78rem; flex-basis: 100%; }
 
+
+/* --- corrections ---------------------------------------------------------
+   One row: heard-as → should-be → language → scope → Add. It wraps rather
+   than scrolls, because an operator fixing a name mid-talk is typing fast and
+   a field that has slid off the edge is a field they will not find. */
+.cx-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: .6rem;
+  margin: .2rem 0 .4rem;
+}
+.cx-field { display: flex; flex-direction: column; gap: .25rem; flex: 1 1 11rem; }
+.cx-field > span { font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.cx-field input, .cx-field select { width: 100%; }
+.cx-arrow { align-self: center; padding: 0 .1rem .5rem; color: var(--muted); font-size: 1.1rem; }
+.cx-note { margin: 0 0 .9rem; font-size: .8rem; }
+
+/* The rule itself reads left to right in the same order as the form. */
+.cx-rule { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.cx-wrong { text-decoration: line-through; color: var(--muted); }
+.cx-right { font-weight: 600; }
+/* A correction may be into Arabic, so the text is isolated rather than the
+   row: dir on the row flips the arrow and the buttons with it. See the
+   transcript panel, which learned this the same way. */
+.cx-wrong, .cx-right { unicode-bidi: isolate; }
+.cx-deleted { font-style: italic; color: var(--muted); }
