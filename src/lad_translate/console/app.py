@@ -284,12 +284,26 @@ def create_app(
             changed = env.write(updates, app.state.env_path)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        except OSError as exc:
+            # Only ValueError was caught here, so a console pointed at a path
+            # it cannot write - a dev box without /etc/lad-translate, most
+            # obviously - answered APPLY with a bare 500 and no detail for the
+            # page to show. Name the file: it is always the useful fact.
+            raise HTTPException(
+                500,
+                f"cannot write {app.state.env_path}: {exc.strerror or exc}. "
+                "Point the console at a writable file with --env-file.",
+            ) from exc
 
         restarted = False
         if body.restart:
             try:
                 await sessions.restart(body.room)
                 restarted = True
+            except sessions.NotManagedHere as exc:
+                # Nothing is broken; this console is simply not on the
+                # box that runs the units. 503 says that, 500 does not.
+                raise HTTPException(503, str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(500, str(exc)) from exc
 
@@ -305,6 +319,8 @@ def create_app(
             await sessions.stop(body.room)
         except sessions.BadRoom as exc:
             raise HTTPException(400, str(exc)) from exc
+        except sessions.NotManagedHere as exc:
+            raise HTTPException(503, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from exc
         return {"stopped": True}
@@ -321,11 +337,23 @@ def create_app(
         except sessions.BadRoom as exc:
             raise HTTPException(400, str(exc)) from exc
         try:
-            env.write({"LAD_TRANSLATE_RECORD_FLAG": "--record" if body.on else ""}, app.state.env_path)
+            try:
+                env.write(
+                    {"LAD_TRANSLATE_RECORD_FLAG": "--record" if body.on else ""},
+                    app.state.env_path,
+                )
+            except OSError as exc:
+                raise HTTPException(
+                    500,
+                    f"cannot write {app.state.env_path}: {exc.strerror or exc}. "
+                    "Point the console at a writable file with --env-file.",
+                ) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         try:
             await sessions.record(body.room, body.on)
+        except sessions.NotManagedHere as exc:
+            raise HTTPException(503, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from exc
         log.info(
