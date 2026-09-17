@@ -577,10 +577,33 @@ class FastConformerSttAdapter(SttAdapter):
             # Was hardcoded "cuda", which fails outright on a CPU box - and CPU
             # turns out to be comfortable here, so defaulting to a GPU that may
             # not exist buys nothing. Explicit still wins: pass device= to pin it.
+            #
+            # MPS is checked because on Apple silicon the CPU path is the slow
+            # one, which is the reverse of everywhere else in this repo.
+            # PyTorch has no oneDNN build for arm64 macOS ("MKLDNN not found"),
+            # so it falls back to generic kernels, while CTranslate2 - what
+            # Whisper runs on - ships hand written NEON and goes FASTER on the
+            # same machine. Measured on an M4, holmes + keynote, same weights,
+            # WER identical to the decimal on every row:
+            #
+            #     lookahead   cpu RTF   mps RTF
+            #     0ms           2.916     0.522
+            #     80ms          1.696     0.302
+            #     480ms         0.516     0.111
+            #     1040ms        0.280     0.079
+            #
+            # On CPU the two tightest lookaheads are SLOWER THAN REALTIME and
+            # cannot be used at all; on MPS all four are. Thread count is not
+            # the lever - 4, 8 and 10 threads measured 0.506/0.512/0.523.
             import importlib.util as _iu
             if _iu.find_spec("torch") is not None:
                 import torch as _torch
-                device = "cuda" if _torch.cuda.is_available() else "cpu"
+                if _torch.cuda.is_available():
+                    device = "cuda"
+                elif _torch.backends.mps.is_available():
+                    device = "mps"
+                else:
+                    device = "cpu"
             else:
                 device = "cpu"
         self.device = device

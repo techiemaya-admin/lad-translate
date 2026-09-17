@@ -414,8 +414,21 @@ def test_an_empty_step_reads_as_empty_rather_than_raising():
 # --- construction and registry ----------------------------------------------
 
 
-def test_a_missing_dependency_is_reported_at_construction():
-    """Not when the audience is already in the room."""
+def test_a_missing_dependency_is_reported_at_construction(monkeypatch):
+    """
+    Not when the audience is already in the room.
+
+    The absence is MOCKED. This used to call build_stt bare and pass only
+    because nemo happened not to be installed on the machine running it, so
+    installing the dependency it describes turned the test red while the
+    behaviour it names was still correct.
+    """
+    import importlib.util as iu
+
+    real = iu.find_spec
+    monkeypatch.setattr(
+        iu, "find_spec", lambda name, *a, **k: None if name == "nemo" else real(name, *a, **k)
+    )
     with pytest.raises(RuntimeError, match="nemo_toolkit"):
         build_stt("fastconformer")
 
@@ -431,10 +444,17 @@ def test_the_registry_records_that_this_model_is_english_only():
     assert "not " in note and "multilingual" in note
 
 
-def test_the_registry_records_that_it_is_unrun_and_gpu_only():
+def test_the_registry_records_that_it_does_not_need_a_gpu():
+    """
+    This said "unrun and gpu only" until the thing had been run. It has now
+    been measured on three devices - 16 vCPU, an M4's cpu, and that M4's mps -
+    and keeps up on all of them, so claiming it needs CUDA would send a venue
+    shopping for hardware it does not need.
+    """
     spec = STT_BACKENDS["fastconformer"]
-    assert spec.credible_on == frozenset({"cuda"})
-    assert "never run" in spec.note.lower()
+    assert spec.credible_on == frozenset({"cuda", "cpu", "mps"})
+    assert "never run" not in spec.note.lower()
+    assert "without a gpu" in spec.note.lower()
 
 
 def test_whisper_is_still_credible_nowhere():

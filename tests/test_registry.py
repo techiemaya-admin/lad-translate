@@ -61,5 +61,9 @@ def test_unknown_backend_is_refused():
 def test_every_registered_backend_declares_its_devices():
     for table in (STT_BACKENDS, MT_BACKENDS, TTS_BACKENDS):
         for name, spec in table.items():
-            assert spec.credible_on <= {"cpu", "cuda"}, f"{name} has an odd device set"
+            # mps joined the vocabulary when FastConformer was measured on
+            # Apple silicon: 0.111 RTF there against 0.516 on the same
+            # machine's cpu. This guard is for typos, not a policy that the
+            # only real accelerator is CUDA.
+            assert spec.credible_on <= {"cpu", "cuda", "mps"}, f"{name} has an odd device set"
             assert spec.note, f"{name} has no note"
