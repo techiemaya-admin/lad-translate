@@ -60,14 +60,16 @@ STT_BACKENDS: dict[str, BackendSpec] = {
     ),
     "fastconformer": BackendSpec(
         "fastconformer",
-        credible_on=GPU_ONLY,
+        credible_on=frozenset({"cuda", "cpu", "mps"}),
         note=(
             "NVIDIA cache-aware streaming transducer, ~114M params. Constant "
             "cost per step at any talk length, which is the property Whisper "
             "cannot have. Lookahead selectable at load: 0/80/480/1040ms, "
             "defaulted here to 480ms rather than NeMo's 1040ms. ENGLISH ONLY "
             "-- 'multi' in the model name means multiple lookaheads, not "
-            "multilingual. Adapter written, never run: needs CUDA"
+            "multilingual. Runs without a GPU: measured RTF 0.07 at 480ms on "
+            "16 vCPU, and on an Apple M4 0.111 on mps against 0.516 on cpu, "
+            "where the two tightest lookaheads are slower than realtime"
         ),
     ),
     "qwen3-asr": BackendSpec(

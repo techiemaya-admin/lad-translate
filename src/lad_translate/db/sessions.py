@@ -314,7 +314,11 @@ class SessionStore:
         """
         row = await self._pool.fetchrow(
             f"""
-            SELECT session_id::text, event_name, status, started_at, target_languages
+            -- source_language is selected for the correction replay, which
+            -- has to know which rules are source rules. Additive: callers
+            -- read this row by key.
+            SELECT session_id::text, event_name, status, started_at,
+                   source_language, target_languages
               FROM {self._schema}.translation_sessions
              WHERE tenant_id = $1::uuid AND room_name = $2
              ORDER BY (status IN ('starting', 'live')) DESC, started_at DESC

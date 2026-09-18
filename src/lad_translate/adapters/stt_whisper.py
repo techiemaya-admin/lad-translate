@@ -149,6 +149,38 @@ class WhisperSttAdapter(SttAdapter):
         Whisper's own window is 30 seconds. Going near it makes each pass
         slower with no accuracy gain for live speech; 8 keeps enough context
         for sentence-level punctuation without parking 20 seconds of audio.
+
+        IT IS ALSO AN ACCURACY KNOB, and the cost of lowering it is larger
+        than it looks. Every time the buffer fills, the audio in it is
+        transcribed, locked into _locked_text and DISCARDED - and the cut
+        lands wherever the buffer happened to fill, not where speech paused.
+        A full buffer means the speaker is mid-sentence, which is why it
+        filled, so the word across the cut is truncated in this window and
+        headless in the next, and neither reading recovers it.
+
+        Measured 2026-09-15, tiny at emit 3.0, pooled over holmes + keynote
+        (225 reference words), varying ONLY this value:
+
+            window    cuts    WER
+            4          23    16.9%
+            6          16    11.6%
+            8          11    12.0%
+            12          7     9.8%
+            16          5     9.3%
+
+        About one word lost per cut. On the live pipeline the same move from
+        6 to 12 took WER 14.1% to 10.7% for p50 0.85s -> 1.73s, with nothing
+        shed either way - so this trades latency for accuracy directly, and
+        the budget that decides how far you can push it is
+        emit_interval > window_s * RTF (see _note_pass_cost).
+
+        Cutting more cleverly does NOT work and has been tried: cutting at
+        segment ends, at word ends, and in detected silence gaps all carry
+        audio into the next window, where it is re-transcribed at the HEAD of
+        the buffer with no left context and comes out worse than it did as
+        the tail of this one. Word-end cuts were the worst of them, 10.7% to
+        16.1%, deleting whole words whose audio was discarded while their
+        text was never locked. Fewer cuts is the lever that works.
         """
 
         self.silence_rms = silence_rms

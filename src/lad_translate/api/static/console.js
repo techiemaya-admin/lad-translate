@@ -18,6 +18,16 @@
 
   var el = {
     room: $("room"),
+    cxPill: $("cx-pill"),
+    cxForm: $("cx-form"),
+    cxWrong: $("cx-wrong"),
+    cxRight: $("cx-right"),
+    cxLanguage: $("cx-language"),
+    cxScope: $("cx-scope"),
+    cxState: $("cx-state"),
+    cxList: $("cx-list"),
+    cxReplay: $("cx-replay"),
+    trFix: $("tr-fix"),
     pill: $("pill"),
     refreshed: $("refreshed"),
     pageTitle: $("page-title"),
@@ -488,6 +498,16 @@
           el.trState.hidden = true;
         }
 
+        // Offer the correction form the languages this room is really
+        // producing, taken from the phrases themselves.
+        if (t.chunks.length) {
+          var seen = {};
+          t.chunks.forEach(function (c) {
+            Object.keys(c.languages || {}).forEach(function (k) { seen[k] = 1; });
+          });
+          setCorrectionLanguages(Object.keys(seen).sort());
+        }
+
         var stick = el.trFollow.checked && atBottom();
         t.chunks.forEach(function (c) {
           el.trLines.appendChild(renderChunk(c));
@@ -912,6 +932,132 @@
     });
   }
 
+  // --- corrections ---------------------------------------------------------
+  //
+  // The languages offered are the ones this room is actually producing, plus
+  // the source. Offering the full ISO list invites a rule on a language the
+  // session never emits, which then silently never fires.
+  var cxLanguages = [];
+
+  function setCorrectionLanguages(codes) {
+    var wanted = ["en"].concat(codes || []);
+    // cxLanguages is a var in this IIFE and the function is hoisted above it,
+    // so a caller that ran earlier than the declaration would see undefined.
+    // Today init runs last and it cannot happen; the guard costs nothing and
+    // means reordering the file is not a landmine.
+    if (cxLanguages && wanted.join(",") === cxLanguages.join(",")) return;
+    cxLanguages = wanted;
+    var keep = el.cxLanguage.value;
+    el.cxLanguage.innerHTML = "";
+    wanted.forEach(function (code) {
+      var o = document.createElement("option");
+      o.value = code;
+      o.textContent = code === "en"
+        ? "Source (English) — fixes every language"
+        : code.toUpperCase() + " only";
+      el.cxLanguage.appendChild(o);
+    });
+    if (keep && wanted.indexOf(keep) >= 0) el.cxLanguage.value = keep;
+  }
+
+  function renderCorrections(data) {
+    el.cxPill.textContent = data.rules.length
+      ? data.rules.length + (data.rules.length === 1 ? " rule" : " rules")
+      : "none yet";
+    el.cxState.hidden = !data.reason;
+    if (data.reason) el.cxState.textContent = data.reason;
+
+    el.cxList.innerHTML = "";
+    if (!data.rules.length) {
+      el.cxList.appendChild(h("p", "muted",
+        "No corrections yet. When a name comes out wrong in the transcript, " +
+        "select it up there and press “Correct selection”."));
+      return;
+    }
+    data.rules.forEach(function (r) {
+      var card = h("div", "device-card");
+      var row = h("div", "cx-rule");
+      var wrong = h("span", "cx-wrong", r.wrong);
+      var arrow = h("span", "muted", "→");
+      var right = r.right
+        ? h("span", "cx-right", r.right)
+        : h("span", "cx-deleted", "(removed)");
+      if (r.language !== "en") { wrong.dir = "auto"; right.dir = "auto"; }
+      var where = h("span", "chip",
+        (r.language === "en" ? "source" : r.language) +
+        (r.room ? " · " + r.room : " · every room"));
+      row.appendChild(wrong); row.appendChild(arrow); row.appendChild(right);
+      row.appendChild(where);
+      var del = h("button", "small danger", "Delete");
+      del.addEventListener("click", function () {
+        api("/console/api/corrections/" + r.id, { method: "DELETE" })
+          .then(function () { toast("Correction removed."); loadCorrections(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
+      row.appendChild(del);
+      card.appendChild(row);
+      el.cxList.appendChild(card);
+    });
+  }
+
+  function loadCorrections() {
+    return api("/console/api/corrections?room=" + encodeURIComponent(room()))
+      .then(renderCorrections)
+      .catch(function (err) {
+        el.cxState.hidden = false;
+        el.cxState.textContent = err.message;
+      });
+  }
+
+  el.cxForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var wrong = el.cxWrong.value.trim();
+    if (!wrong) return;
+    api("/console/api/corrections", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        wrong: wrong,
+        right: el.cxRight.value.trim(),
+        language: el.cxLanguage.value,
+        room: room(),
+        everywhere: el.cxScope.value === "everywhere"
+      })
+    }).then(function () {
+      el.cxWrong.value = ""; el.cxRight.value = "";
+      toast("Correction saved. It applies to new phrases within five seconds.");
+      loadCorrections();
+    }).catch(function (err) { toast(err.message, true); });
+  });
+
+  el.cxReplay.addEventListener("click", function () {
+    api("/console/api/corrections/replay?room=" + encodeURIComponent(room()),
+        { method: "POST" })
+      .then(function (r) {
+        toast(r.rows_changed
+          ? "Rewrote " + r.words_changed + " word(s) across " + r.rows_changed + " line(s)."
+          : (r.reason || "Nothing in the stored transcript matched."));
+        loadTranscript();
+      })
+      .catch(function (err) { toast(err.message, true); });
+  });
+
+  // Select a wrong word in the transcript, press the button, and the form is
+  // already filled in. Typing it again by hand is how a correction ends up
+  // not quite matching what was actually said.
+  el.trFix.addEventListener("click", function () {
+    var picked = String(window.getSelection ? window.getSelection() : "").trim();
+    if (!picked) {
+      toast("Select the wrong words in the transcript first, then press this.", true);
+      return;
+    }
+    el.cxWrong.value = picked.slice(0, 200);
+    setActiveNav("corrections");
+    var target = document.getElementById("corrections");
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.cxRight.focus();
+  });
+
   function loadOutputs() {
     return api(BASE + "/api/outputs").then(function (o) {
       outputs.languages = o.languages;
@@ -1236,6 +1382,7 @@
   loadRecordings();
   loadTranscript();
   loadTranscriptSessions();
+  loadCorrections();
   watchSections();
   timer = setInterval(refreshStatus, 5000);
   // Faster than the status poll: a phrase the operator is reading along with

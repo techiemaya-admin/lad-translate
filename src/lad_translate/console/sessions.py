@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 from dataclasses import dataclass
 
 from ..obs.log import get_logger
@@ -59,10 +60,52 @@ class SessionStatus:
     recording_takes: int = 0
 
 
+class NotManagedHere(RuntimeError):
+    """
+    This host does not run the session units, so the deck cannot drive them.
+
+    Distinct from a unit that failed: nothing is broken, the console is simply
+    somewhere systemd is not. Raised BEFORE shelling out, because the errors
+    you get otherwise are misleading - on macOS `sudo` exists while systemctl
+    does not, so `sudo -n systemctl restart` answers "sudo: a password is
+    required" and sends the operator hunting for a sudoers rule that would not
+    have helped.
+    """
+
+
+def _explain_if_no_systemd() -> None:
+    """
+    Call ONLY after a command has failed, never before it.
+
+    Checking up front runs ahead of a patched _run, so the suite would pass on
+    a Linux box and fail on a Mac purely from the host it ran on. Tests that
+    stub the command out stay on the happy path and never reach here.
+    """
+    if shutil.which("systemctl") is None:
+        raise NotManagedHere(
+            "this host has no systemd, so the console cannot start or stop "
+            "sessions here - run tools/session_live.py from a terminal instead"
+        )
+
+
 async def _run(*args: str) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        )
+    except FileNotFoundError:
+        # No systemd on this host. The deck cannot manage units here, but the
+        # rest of the console - transcript, recordings, outputs, QR - reads the
+        # database and files and works perfectly well, so report the unit as
+        # absent rather than 500 the whole page.
+        #
+        # Found running the console on a Mac to test locally: status() 500'd on
+        # FileNotFoundError from systemctl and took the deck down with it. On
+        # the VM the binary is always there, which is why this never showed.
+        return 127, (
+            f"{args[0]} is not installed on this host, so the console cannot "
+            "manage session units here - run tools/session_live.py instead"
+        )
     out, _ = await proc.communicate()
     return proc.returncode or 0, out.decode(errors="replace")
 
@@ -71,6 +114,7 @@ async def restart(room: str) -> None:
     validate_room(room)
     code, out = await _run("sudo", "-n", "systemctl", "restart", UNIT.format(room=room))
     if code != 0:
+        _explain_if_no_systemd()
         raise RuntimeError(f"systemctl restart failed: {out.strip()[:300]}")
     log.info("session restarted", extra={"room": room})
 
@@ -79,6 +123,7 @@ async def stop(room: str) -> None:
     validate_room(room)
     code, out = await _run("sudo", "-n", "systemctl", "stop", UNIT.format(room=room))
     if code != 0:
+        _explain_if_no_systemd()
         raise RuntimeError(f"systemctl stop failed: {out.strip()[:300]}")
     log.info("session stopped", extra={"room": room})
 
@@ -98,6 +143,7 @@ async def record(room: str, on: bool) -> None:
         "sudo", "-n", "systemctl", "kill", f"--signal={sig}", UNIT.format(room=room)
     )
     if code != 0 and "not loaded" not in out and "inactive" not in out:
+        _explain_if_no_systemd()
         raise RuntimeError(f"systemctl kill failed: {out.strip()[:300]}")
     log.info("recording signalled", extra={"room": room, "on": on})
 
