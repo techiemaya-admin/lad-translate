@@ -398,21 +398,33 @@ async def test_the_speaker_page_offers_an_input_picker(env):
     assert 'id="input-list"' in page
 
 
-async def test_processing_is_on_for_a_phone_and_off_for_a_chosen_device(env):
+async def test_processing_is_on_unless_the_input_is_declared_raw(env):
     """
     Echo cancellation, noise suppression and AGC exist for a handset playing
     a translation into the room it is listening to. On a desk send every one
     of them hurts: AGC pumps on a mixed feed and noise suppression eats the
     tail of a sentence.
+
+    This used to be inferred from WHICH input was chosen - any chosen device
+    was assumed to be a desk send, and the choice was remembered - so one test
+    with a laptop's own microphone left every later session capturing the room
+    with no noise suppression, and Whisper invented YouTube outros out of the
+    room tone. Raw capture is now its own explicit, remembered choice.
     """
     client, *_ = env
     script = (await client.get("/static/speak.js")).text
     assert "audioConstraints" in script
-    assert "deviceId: { exact: id }" in script
-    # The phone branch keeps them on; the device branch turns them off.
-    assert "echoCancellation: true" in script
-    assert "echoCancellation: false" in script
-    assert "autoGainControl: false" in script
+    # Processing follows ONE flag, not the device selection.
+    assert "var processed = !rawInput" in script
+    assert "echoCancellation: processed" in script
+    assert "noiseSuppression: processed" in script
+    assert "autoGainControl: processed" in script
+    # The device is still pinned when chosen.
+    assert "c.deviceId = { exact: id }" in script
+    # And the raw choice is remembered separately from the device choice.
+    assert "lad.speaker.raw" in script
+    page = (await client.get("/static/speak.html")).text
+    assert 'id="input-raw"' in page and "Raw input" in page
 
 
 async def test_the_chosen_input_survives_a_reload(env):

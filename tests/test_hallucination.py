@@ -88,3 +88,42 @@ def test_resampling_preserves_level_for_real_signal():
     out = resample_to_16k(tone, 22050)
     level = float(np.sqrt(np.mean(np.square(out))))
     assert 0.1 < level < 0.5, f"level changed unexpectedly: {level}"
+
+
+# --- the outros -------------------------------------------------------------
+#
+# Observed live 2026-09-21: "Thank you for watching." and "See you next time."
+# both reached the audience with a CONFIDENT logprob, because Whisper has read
+# those sentences more often than any others. The doubt gate cannot catch a
+# phrase the model is sure of, so these are dropped on the words alone.
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["Thank you for watching.", "See you next time.", "Thanks for watching!",
+     "Please like and subscribe.", "Subtitles by the Amara.org community"],
+)
+def test_a_youtube_outro_is_dropped_however_confident(phrase):
+    """Nobody at a lectern says this. Confidence is irrelevant."""
+    assert is_hallucination(phrase, no_speech_prob=0.05, avg_logprob=-0.1)
+
+
+def test_thank_you_very_much_still_needs_doubt():
+    """People DO say this at a lectern, so it keeps the doubt gate."""
+    assert not is_hallucination("Thank you very much.", no_speech_prob=0.05, avg_logprob=-0.15)
+    assert is_hallucination("Thank you very much.", no_speech_prob=0.6, avg_logprob=-0.4)
+
+
+def test_the_two_lists_do_not_overlap():
+    """A phrase in both would be dropped unconditionally by accident."""
+    from lad_translate.adapters.stt_whisper import NEVER_SAID_AT_A_LECTERN
+
+    assert not (HALLUCINATED_ON_SILENCE & NEVER_SAID_AT_A_LECTERN)
+    assert all(p == p.lower() for p in NEVER_SAID_AT_A_LECTERN)
+
+
+def test_an_outro_inside_a_real_sentence_is_not_matched():
+    """Whole segment only. "thanks for watching the demo" is a real sentence."""
+    assert not is_hallucination(
+        "Thanks for watching the demo, now to the numbers.", 0.05, -0.2
+    )

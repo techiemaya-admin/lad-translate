@@ -48,13 +48,36 @@ WHISPER_SAMPLE_RATE = SAMPLE_RATE_16K
 # genuine speech to remove an artefact.
 HALLUCINATED_ON_SILENCE = frozenset(
     {
-        "thank you.", "thank you", "thanks for watching!", "thanks for watching",
-        "thank you for watching.", "thank you for watching",
-        "thanks for watching and see you next time.",
-        "please subscribe to my channel.", "subtitles by the amara.org community",
-        "you", "bye.", "bye", "okay.", ".", "...",
+        "thank you.", "thank you", "thank you very much.", "thank you very much",
+        "you", "bye.", "bye", "okay.", ".", "...", "love.", "let's go.",
     }
 )
+"""Phrases people DO say at a lectern, so they only count as evidence once the
+segment already looks doubtful. See is_hallucination."""
+
+NEVER_SAID_AT_A_LECTERN = frozenset(
+    {
+        "thanks for watching!", "thanks for watching", "thanks for watching.",
+        "thank you for watching.", "thank you for watching",
+        "thanks for watching and see you next time.",
+        "see you next time.", "see you next time", "i'll see you next time.",
+        "see you in the next video.", "see you in the next one.",
+        "please subscribe to my channel.", "please like and subscribe.",
+        "subtitles by the amara.org community", "subtitles by amara.org",
+    }
+)
+"""
+YouTube outros. Nobody at a conference lectern says "thanks for watching", so
+these are dropped WHATEVER the model's confidence - which matters, because
+Whisper is often very confident about them: they are the most frequent
+sentences in its training data.
+
+Observed live 2026-09-21 on the develop VM, whisper tiny, a microphone in a
+room with no noise suppression: "Thank you for watching." and "See you next
+time." both passed the doubt gate below with a confident logprob, alongside
+"Thank you very much." twice and a 10-second window that produced the single
+word "Love." Five of thirty-one phrases were outros.
+"""
 
 
 def is_hallucination(text: str, no_speech_prob: float, avg_logprob: float) -> bool:
@@ -75,11 +98,20 @@ def is_hallucination(text: str, no_speech_prob: float, avg_logprob: float) -> bo
     if not stripped:
         return True
 
+    # A YouTube outro is never speech from a lectern. No confidence check:
+    # the model is CONFIDENT about these, which is the whole problem.
+    if stripped in NEVER_SAID_AT_A_LECTERN:
+        return True
+
     # Confidently non-speech: drop whatever it produced, whatever the words.
+    # Both signals, on purpose - a high no_speech_prob with a confident
+    # transcript is what a quiet talker looks like, and dropping that deletes
+    # real speech. See test_high_no_speech_alone_is_not_enough.
     if no_speech_prob > 0.8 and avg_logprob < -0.5:
         return True
 
-    # A stock phrase is only evidence when the segment is already doubtful.
+    # A stock phrase people do say is only evidence when the segment is
+    # already doubtful.
     return stripped in HALLUCINATED_ON_SILENCE and (
         no_speech_prob > 0.5 or avg_logprob < -0.7
     )
@@ -395,6 +427,20 @@ class WhisperSttAdapter(SttAdapter):
                         },
                     )
                     continue
+                if seg.no_speech_prob > 0.3:
+                    # Kept, but the model half-doubted it. One line so the next
+                    # investigation has the numbers this one did not: the
+                    # suppressed ones log at DEBUG and the kept ones logged
+                    # nothing, so a live report of hallucination had no data.
+                    log.info(
+                        "kept a segment whisper half-doubted",
+                        extra={
+                            "text": seg.text.strip()[:80],
+                            "no_speech_prob": round(seg.no_speech_prob, 3),
+                            "avg_logprob": round(seg.avg_logprob, 3),
+                            "seconds": round(seg.end - seg.start, 2),
+                        },
+                    )
                 kept.append(seg.text.strip())
             return " ".join(kept).strip()
 
