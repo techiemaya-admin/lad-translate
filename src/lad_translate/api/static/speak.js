@@ -21,6 +21,13 @@
   // pointing at the room rather than the desk send patched into its sound
   // card. Remembered per device so the rig comes back the same tomorrow.
   var INPUT_KEY = "lad.speaker.input";
+  // Whether the chosen input is a line-level feed that must not be
+  // processed. Separate from WHICH input, because they are separate
+  // decisions: choosing this laptop's own microphone from the list is not
+  // choosing a desk send, and for weeks it was treated as one.
+  var RAW_KEY = "lad.speaker.raw";
+  var rawInput = false;
+  try { rawInput = window.localStorage.getItem(RAW_KEY) === "1"; } catch (e) { rawInput = false; }
   var chosenInput = null;
   try { chosenInput = window.localStorage.getItem(INPUT_KEY); } catch (e) { chosenInput = null; }
   // The page is served at two URL shapes and must talk to the matching API:
@@ -40,6 +47,7 @@
   var el = {
     inputPick: document.getElementById("input-pick"),
     inputDevice: document.getElementById("input-device"),
+    inputRaw: document.getElementById("input-raw"),
     inputList: document.getElementById("input-list"),
     inputHint: document.getElementById("input-hint"),
     goSub: document.getElementById("go-sub"),
@@ -161,7 +169,7 @@
     el.inputPick.hidden = named > 0 && inputs.length <= 1;
     el.inputList.hidden = named > 0;
     el.inputHint.textContent = named
-      ? "Pick the desk send rather than the built-in microphone. Processing is left on for a phone mic and turned off for anything else."
+      ? "Pick the desk send rather than the built-in microphone. Tick Raw input only for a line-level feed: it turns off noise suppression, echo cancellation and gain control, which a microphone in a room still needs."
       : "Allow the microphone once to see input names.";
     updateGoSub();
   }
@@ -169,8 +177,11 @@
   function updateGoSub() {
     var opt = el.inputDevice.options[el.inputDevice.selectedIndex];
     var picked = opt && opt.value;
-    el.goSub.textContent = picked ? "uses " + opt.textContent : "uses this device's default input";
+    el.goSub.textContent = (picked ? "uses " + opt.textContent : "uses this device's default input")
+      + (rawInput ? " \u00b7 raw, no processing" : "");
   }
+
+  if (el.inputRaw) el.inputRaw.checked = rawInput;
 
   function listInputs() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -191,19 +202,34 @@
   function audioConstraints() {
     var opt = el.inputDevice.options[el.inputDevice.selectedIndex];
     var id = opt && opt.value;
-    if (!id) {
-      // The phone case, unchanged: a handset playing a translation into the
-      // room would otherwise feed back into its own microphone.
-      return { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
-    }
-    // A chosen device is a desk send or a sound card. Every one of those
-    // cures hurts it: AGC pumps on a mixed feed and noise suppression eats
-    // the tail of a sentence.
-    return {
-      deviceId: { exact: id },
-      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1
+    // Processing stays ON unless the operator says the input is raw. It
+    // used to switch off the moment any device was chosen, on the theory
+    // that a chosen device is a desk send - and the choice was remembered,
+    // so one test with a laptop's own microphone left every later session
+    // capturing the room with no noise suppression. Whisper then invented
+    // "Thank you very much" and "See you next time" out of the room tone,
+    // which is exactly what an unprocessed microphone in a room produces.
+    //
+    // A real desk send does need this off: AGC pumps on a mixed feed and
+    // noise suppression eats the tail of a sentence. That is what the Raw
+    // input box is for, and it is a separate, explicit, remembered choice.
+    var processed = !rawInput;
+    var c = {
+      echoCancellation: processed, noiseSuppression: processed,
+      autoGainControl: processed, channelCount: 1
     };
+    if (id) c.deviceId = { exact: id };
+    return c;
   }
+
+  el.inputRaw.addEventListener("change", function () {
+    rawInput = !!el.inputRaw.checked;
+    try {
+      if (rawInput) window.localStorage.setItem(RAW_KEY, "1");
+      else window.localStorage.removeItem(RAW_KEY);
+    } catch (e) { /* private browsing; the choice just will not persist */ }
+    updateGoSub();
+  });
 
   el.inputDevice.addEventListener("change", function () {
     chosenInput = el.inputDevice.value || null;

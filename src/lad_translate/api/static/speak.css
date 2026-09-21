@@ -71,3 +71,6 @@
   color: var(--accent); font: inherit; font-size: .85rem;
   cursor: pointer; text-align: left; justify-self: start;
 }
+
+/* Raw-input toggle under the picker. Small on purpose: it is the exception. */
+.raw-toggle { display: flex; gap: .45rem; align-items: center; font-size: .85rem; margin: .35rem 0 0; }
