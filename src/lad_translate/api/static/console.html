@@ -29,7 +29,7 @@
           <span class="nav-icon" aria-hidden="true">👍</span> Learnings
         </a>
         <a href="#corrections" class="nav-link" data-section="corrections">
-          <span class="nav-icon" aria-hidden="true">✎</span> Corrections
+          <span class="nav-icon" aria-hidden="true">✎</span> Dictionary
         </a>
         <a href="#presets" class="nav-link" data-section="presets">
           <span class="nav-icon" aria-hidden="true">⚙</span> Presets
@@ -142,8 +142,9 @@
               <h2>Learnings <span id="fb-pill" class="pill">…</span></h2>
               <p class="muted">
                 Thumbs from the live transcript, and what each one taught. A
-                <strong>thumbs-down with “should have been”</strong> becomes a word rule
-                that changes every phrase from then on — within about five seconds, no
+                <strong>thumbs-down with “should have been”</strong> puts the corrected
+                word in the <a href="#corrections">Dictionary</a>, where it changes every
+                phrase in every room from then on — within about five seconds, no
                 restart. A rewrite too big to be one rule is <em>kept as an example</em>
                 and says so; nothing here pretends the models were retrained.
                 <strong>Thumbs-up</strong> counts too: the per-language score below is
@@ -158,16 +159,19 @@
         </section>
 
         <!-- ============================================================ -->
-        <section class="card" id="corrections" data-title="Corrections">
+        <section class="card" id="corrections" data-title="Dictionary">
           <div class="card-head">
             <div>
-              <h2>Corrections <span id="cx-pill" class="pill">…</span></h2>
+              <h2>Dictionary <span id="cx-pill" class="pill">…</span></h2>
               <p class="muted">
-                A recogniser gets a name wrong the <em>same way every time</em>, so a
-                correction here changes the <strong>next</strong> phrase, not just the last
-                one — it takes effect within about five seconds, with no restart and no
-                audio lost. Correcting the <strong>source</strong> fixes every language at
-                once; correct a single language only when the English was already right.
+                The words this venue has taught the system — like a phone keyboard's
+                personal dictionary. A recogniser gets a name wrong the <em>same way
+                every time</em>, so a word here changes the <strong>next</strong> phrase,
+                not just the last one: within about five seconds, no restart, no audio
+                lost, and in <strong>every room</strong> from then on. Words arrive here
+                from a thumbs-down in the transcript, or are added by hand below.
+                Correcting the <strong>source</strong> fixes every language at once;
+                correct one language only when the English was already right.
               </p>
             </div>
           </div>
@@ -189,15 +193,16 @@
             <label class="cx-field">
               <span>Scope</span>
               <select id="cx-scope">
+                <option value="everywhere">Every room (the dictionary)</option>
                 <option value="room">This room only</option>
-                <option value="everywhere">Every room</option>
               </select>
             </label>
             <button type="submit" class="primary small">Add</button>
           </form>
           <p class="muted cx-note">
             Whole words only, matched whatever the casing — “ad” will never rewrite
-            “Adler”. Leave <em>Should be</em> empty to delete a word entirely.
+            “Adler”. Leave <em>Should be</em> empty to delete a word entirely. A word
+            switched off from the Learnings panel stays listed here, faded.
           </p>
 
           <p class="alert warn" id="cx-state" hidden></p>
