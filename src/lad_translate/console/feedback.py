@@ -128,7 +128,12 @@ def install(app: FastAPI, prefix: str) -> None:
                 produced_text=body.produced_text,
                 expected_text=body.expected_text,
                 note=body.note,
-                room=body.room,
+                # The dictionary is the VENUE's, not the room's. A name taught
+                # in one room is known in every room from then on, the way a
+                # phone's personal dictionary does not relearn a word per
+                # conversation. Room-scoped rules still exist; they are the
+                # exception an operator writes by hand.
+                room=None,
                 created_by=getattr(request.state, "email", None),
             )
         except ValueError as exc:

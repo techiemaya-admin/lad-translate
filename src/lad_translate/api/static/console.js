@@ -519,7 +519,7 @@
         b.classList.toggle("on", (i === 0) === (r.rating === "like"));
       });
       if (r.rating === "like") toast("Marked right.");
-      else if (r.learned) toast("Learned: " + r.learned_reason, false);
+      else if (r.learned) toast("Added to the dictionary: " + r.learned_reason, false);
       else toast("Kept as an example \u2014 " + r.learned_reason, true);
       loadFeedback();
       if (r.learned) loadCorrections();
@@ -597,7 +597,7 @@
 
       if (it.rating === "dislike") {
         var reason = h("div", "fb-reason" + (it.learned ? " learned" : ""),
-          (it.learned ? "Learned: " : "Not learned: ") + it.learned_reason);
+          (it.learned ? "In the dictionary: " : "Not learned: ") + it.learned_reason);
         card.appendChild(reason);
       }
 
