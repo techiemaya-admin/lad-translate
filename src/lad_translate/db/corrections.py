@@ -39,7 +39,7 @@ class CorrectionStore:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""SELECT correction_id, language, wrong_text, right_text,
-                           room_name, created_at, created_by
+                           room_name, is_active, created_at, created_by
                       FROM {self._schema}.corrections
                      WHERE tenant_id = $1
                        AND ($2::text IS NULL OR room_name IS NULL OR room_name = $2)
@@ -50,11 +50,31 @@ class CorrectionStore:
         return [dict(r) for r in rows]
 
     async def load(self, room: str | None = None) -> Corrections:
-        """The compiled rule set a session applies. This is the hot path."""
+        """
+        The compiled rule set a session applies. This is the hot path.
+
+        Only ACTIVE rules: a learning switched off in the panel stops firing
+        on the next reload, which is the whole point of the switch.
+        """
         rows = await self.list_rules(room)
         return Corrections(
-            [Correction(r["wrong_text"], r["right_text"], r["language"]) for r in rows]
+            [
+                Correction(r["wrong_text"], r["right_text"], r["language"])
+                for r in rows
+                if r["is_active"]
+            ]
         )
+
+    async def set_active(self, correction_id: int, active: bool) -> bool:
+        async with self._pool.acquire() as conn:
+            done = await conn.execute(
+                f"UPDATE {self._schema}.corrections SET is_active = $3 "
+                "WHERE correction_id = $1 AND tenant_id = $2",
+                correction_id,
+                self.tenant_id,
+                active,
+            )
+        return done.endswith("1")
 
     async def add(
         self,
@@ -81,7 +101,7 @@ class CorrectionStore:
                     VALUES ($1, $2, $3, $4, $5, $6)
                     ON CONFLICT DO NOTHING
                     RETURNING correction_id, language, wrong_text, right_text,
-                              room_name, created_at, created_by""",
+                              room_name, is_active, created_at, created_by""",
                 self.tenant_id, language, wrong, right, room, created_by,
             )
         if row is None:

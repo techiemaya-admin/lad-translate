@@ -483,3 +483,34 @@ button[disabled] { opacity: .5; cursor: not-allowed; }
    transcript panel, which learned this the same way. */
 .cx-wrong, .cx-right { unicode-bidi: isolate; }
 .cx-deleted { font-style: italic; color: var(--muted); }
+
+/* --- feedback ------------------------------------------------------------
+   Thumbs sit at the end of a transcript line, faint until hovered, so a wall
+   of phrases stays readable and the control is there the moment it is
+   wanted. */
+.fb { display: inline-flex; align-items: center; gap: .1rem; margin-left: .4rem; vertical-align: middle; }
+.fb-btn {
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  padding: 0 .25rem; line-height: 1.4; font-size: .85rem; cursor: pointer;
+  opacity: .35; filter: grayscale(1); transition: opacity .12s;
+}
+.tr-line:hover .fb-btn { opacity: .8; }
+.fb-btn:hover { opacity: 1; filter: none; border-color: var(--line); }
+.fb-btn.on { opacity: 1; filter: none; border-color: var(--accent); }
+
+/* The teach box opens under the line it belongs to and takes the width, so
+   an edited sentence is read as a sentence rather than in a slot. */
+.fb-fix { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; width: 100%; margin: .35rem 0 .2rem; }
+.fb-fix input { flex: 1 1 22rem; min-width: 12rem; }
+.fb-hint { flex-basis: 100%; font-size: .74rem; }
+
+.fb-item { display: flex; flex-direction: column; gap: .3rem; }
+.fb-item-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.fb-rating { font-size: .95rem; }
+.fb-text { unicode-bidi: isolate; }
+.fb-produced { color: var(--muted); text-decoration: line-through; }
+.fb-expected { font-weight: 600; }
+.fb-reason { font-size: .8rem; color: var(--muted); }
+.fb-reason.learned { color: var(--ok, #3fb950); }
+.fb-item.off { opacity: .55; }
+.fb-item.off .fb-reason.learned { color: var(--muted); }
