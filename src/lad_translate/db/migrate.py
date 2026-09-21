@@ -27,6 +27,7 @@ TENANT_MIGRATIONS = (
     "002_audio_outputs.sql",
     "003_session_recording.sql",
     "004_corrections.sql",
+    "005_transcript_feedback.sql",
 )
 
 _LEDGER = """

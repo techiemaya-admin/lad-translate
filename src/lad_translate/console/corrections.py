@@ -64,6 +64,7 @@ def install(app: FastAPI, prefix: str) -> None:
                     "wrong": r["wrong_text"],
                     "right": r["right_text"],
                     "room": r["room_name"],
+                    "active": r["is_active"],
                     "created_at": str(r["created_at"]),
                     "created_by": r["created_by"],
                 }

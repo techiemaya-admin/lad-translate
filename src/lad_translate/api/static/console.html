@@ -25,6 +25,9 @@
         <a href="#transcript" class="nav-link" data-section="transcript">
           <span class="nav-icon" aria-hidden="true">❝</span> Transcript
         </a>
+        <a href="#learnings" class="nav-link" data-section="learnings">
+          <span class="nav-icon" aria-hidden="true">👍</span> Learnings
+        </a>
         <a href="#corrections" class="nav-link" data-section="corrections">
           <span class="nav-icon" aria-hidden="true">✎</span> Corrections
         </a>
@@ -130,6 +133,28 @@
             <button id="tr-download" class="primary small">Download</button>
             <span class="muted" id="tr-download-note"></span>
           </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <section class="card" id="learnings" data-title="Learnings">
+          <div class="card-head">
+            <div>
+              <h2>Learnings <span id="fb-pill" class="pill">…</span></h2>
+              <p class="muted">
+                Thumbs from the live transcript, and what each one taught. A
+                <strong>thumbs-down with “should have been”</strong> becomes a word rule
+                that changes every phrase from then on — within about five seconds, no
+                restart. A rewrite too big to be one rule is <em>kept as an example</em>
+                and says so; nothing here pretends the models were retrained.
+                <strong>Thumbs-up</strong> counts too: the per-language score below is
+                how you learn which translator to trust for the next event.
+              </p>
+            </div>
+          </div>
+
+          <div id="fb-stats" class="kpis"></div>
+          <p class="alert warn" id="fb-state" hidden></p>
+          <div id="fb-list" class="device-list"></div>
         </section>
 
         <!-- ============================================================ -->

@@ -28,6 +28,10 @@
     cxList: $("cx-list"),
     cxReplay: $("cx-replay"),
     trFix: $("tr-fix"),
+    fbPill: $("fb-pill"),
+    fbStats: $("fb-stats"),
+    fbState: $("fb-state"),
+    fbList: $("fb-list"),
     pill: $("pill"),
     refreshed: $("refreshed"),
     pageTitle: $("page-title"),
@@ -443,6 +447,198 @@
     return box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   }
 
+  // --- feedback ------------------------------------------------------------
+  //
+  // The same shape as the WhatsApp agent's AI Learnings: a thumbs on each
+  // line, a "should have been", a switch. What it teaches is different and
+  // the panel says so: there is no prompt here, so a thumbs-down can only
+  // become a word rule - and the reply says whether it did.
+  var fbGiven = {};   // chunk_id + "/" + language -> rating, for repaint
+
+  function fbKey(chunk, code) { return chunk + "/" + code; }
+
+  function thumbs(chunk, code, produced) {
+    var wrap = h("span", "fb");
+    var up = h("button", "fb-btn", "\uD83D\uDC4D");
+    var down = h("button", "fb-btn", "\uD83D\uDC4E");
+    up.title = "This line was right";
+    down.title = "This line was wrong - say what it should have been";
+    var given = fbGiven[fbKey(chunk, code)];
+    if (given === "like") up.classList.add("on");
+    if (given === "dislike") down.classList.add("on");
+
+    up.addEventListener("click", function (e) {
+      e.stopPropagation();
+      sendFeedback({ chunk_id: chunk, language: code, rating: "like", produced_text: produced }, wrap);
+    });
+    down.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openFix(wrap, chunk, code, produced);
+    });
+    wrap.appendChild(up); wrap.appendChild(down);
+    return wrap;
+  }
+
+  function openFix(wrap, chunk, code, produced) {
+    var existing = wrap.querySelector(".fb-fix");
+    if (existing) { existing.remove(); return; }
+    var box = h("div", "fb-fix");
+    var input = h("input");
+    input.placeholder = "Should have been\u2026";
+    input.value = produced;
+    input.maxLength = 2000;
+    if (RTL[code]) input.setAttribute("dir", "rtl");
+    var save = h("button", "primary small", "Teach");
+    var skip = h("button", "ghost small", "Just mark wrong");
+    var hint = h("span", "muted fb-hint",
+      "Edit the wrong words in place. One phrase per line teaches a rule; a rewrite is kept as an example.");
+    save.addEventListener("click", function () {
+      sendFeedback({ chunk_id: chunk, language: code, rating: "dislike",
+                     produced_text: produced, expected_text: input.value }, wrap);
+    });
+    skip.addEventListener("click", function () {
+      sendFeedback({ chunk_id: chunk, language: code, rating: "dislike",
+                     produced_text: produced }, wrap);
+    });
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") save.click(); });
+    box.appendChild(input); box.appendChild(save); box.appendChild(skip); box.appendChild(hint);
+    wrap.appendChild(box);
+    input.focus(); input.select();
+  }
+
+  function sendFeedback(body, wrap) {
+    body.room = room();
+    api(BASE + "/api/transcript/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      fbGiven[fbKey(r.chunk_id, r.language)] = r.rating;
+      var fix = wrap.querySelector(".fb-fix"); if (fix) fix.remove();
+      Array.prototype.forEach.call(wrap.querySelectorAll(".fb-btn"), function (b, i) {
+        b.classList.toggle("on", (i === 0) === (r.rating === "like"));
+      });
+      if (r.rating === "like") toast("Marked right.");
+      else if (r.learned) toast("Learned: " + r.learned_reason, false);
+      else toast("Kept as an example \u2014 " + r.learned_reason, true);
+      loadFeedback();
+      if (r.learned) loadCorrections();
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
+  function kpi(label, value, sub) {
+    var tile = h("div", "kpi");
+    tile.appendChild(h("div", "label", label));
+    tile.appendChild(h("div", "value", value));
+    if (sub) tile.appendChild(h("div", "sub", sub));
+    return tile;
+  }
+
+  function renderFeedback(data) {
+    var n = data.items.length;
+    el.fbPill.textContent = n ? n + (n === 1 ? " line rated" : " lines rated") : "none yet";
+    el.fbState.hidden = !data.reason;
+    if (data.reason) el.fbState.textContent = data.reason;
+
+    // Remember what was given so the transcript repaints its thumbs.
+    fbGiven = {};
+    data.items.forEach(function (it) { fbGiven[fbKey(it.chunk_id, it.language)] = it.rating; });
+    Array.prototype.forEach.call(el.trLines.querySelectorAll(".tr-line"), function (line) {
+      var chunk = line.dataset.chunk;
+      Array.prototype.forEach.call(line.querySelectorAll(".fb"), function (wrap) {
+        // The source thumbs sits in .tr-src; a language's in a .tr-target
+        // whose first child is the code.
+        var codeEl = wrap.parentNode.querySelector(".tr-code");
+        var code = codeEl ? codeEl.textContent : "en";
+        var given = fbGiven[fbKey(chunk, code)];
+        var btns = wrap.querySelectorAll(".fb-btn");
+        if (btns.length === 2) {
+          btns[0].classList.toggle("on", given === "like");
+          btns[1].classList.toggle("on", given === "dislike");
+        }
+      });
+    });
+
+    // Per-language score: the quality signal a thumbs-up exists for.
+    el.fbStats.innerHTML = "";
+    data.stats.forEach(function (s) {
+      var total = s.likes + s.dislikes;
+      var pct = total ? Math.round(100 * s.likes / total) : 0;
+      var name = s.language === "en" ? "Source" : s.language.toUpperCase();
+      el.fbStats.appendChild(kpi(
+        name + " approval",
+        pct + "%",
+        s.likes + " up \u00b7 " + s.dislikes + " down \u00b7 " + s.learned + " learned"
+      ));
+    });
+
+    el.fbList.innerHTML = "";
+    if (!n) {
+      el.fbList.appendChild(h("p", "muted",
+        "Nothing yet. Give a line in the transcript a thumbs-down and edit the wrong words; " +
+        "one phrase becomes a rule the next phrase obeys."));
+      return;
+    }
+    data.items.forEach(function (it) {
+      var card = h("div", "device-card fb-item" + (it.active ? "" : " off"));
+      var head = h("div", "fb-item-head");
+      head.appendChild(h("span", "fb-rating", it.rating === "like" ? "\uD83D\uDC4D" : "\uD83D\uDC4E"));
+      head.appendChild(h("span", "chip", (it.language === "en" ? "source" : it.language) + " \u00b7 #" + it.chunk_id));
+      var produced = h("span", "fb-text " + (it.expected ? "fb-produced" : ""), it.produced);
+      if (RTL[it.language]) produced.setAttribute("dir", "rtl");
+      head.appendChild(produced);
+      if (it.expected) {
+        head.appendChild(h("span", "muted", "\u2192"));
+        var exp = h("span", "fb-text fb-expected", it.expected);
+        if (RTL[it.language]) exp.setAttribute("dir", "rtl");
+        head.appendChild(exp);
+      }
+      card.appendChild(head);
+
+      if (it.rating === "dislike") {
+        var reason = h("div", "fb-reason" + (it.learned ? " learned" : ""),
+          (it.learned ? "Learned: " : "Not learned: ") + it.learned_reason);
+        card.appendChild(reason);
+      }
+
+      var actions = h("div", "actions");
+      if (it.learned) {
+        var tog = h("button", "small", it.active ? "Turn off" : "Turn on");
+        tog.title = it.active
+          ? "Stop applying this rule; the feedback stays"
+          : "Apply this rule again";
+        tog.addEventListener("click", function () {
+          api(BASE + "/api/transcript/feedback/" + it.id + "/active", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ active: !it.active })
+          }).then(function () { loadFeedback(); loadCorrections(); })
+            .catch(function (err) { toast(err.message, true); });
+        });
+        actions.appendChild(tog);
+      }
+      var del = h("button", "small danger", "Delete");
+      del.title = it.learned ? "Removes the rule it taught as well" : "Remove this feedback";
+      del.addEventListener("click", function () {
+        api(BASE + "/api/transcript/feedback/" + it.id, { method: "DELETE" })
+          .then(function () { toast("Removed."); loadFeedback(); loadCorrections(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
+      actions.appendChild(del);
+      card.appendChild(actions);
+      el.fbList.appendChild(card);
+    });
+  }
+
+  function loadFeedback() {
+    if (!room()) return;
+    return api(BASE + "/api/transcript/feedback?room=" + encodeURIComponent(room()))
+      .then(renderFeedback)
+      .catch(function (err) {
+        el.fbState.hidden = false;
+        el.fbState.textContent = err.message;
+      });
+  }
+
   function renderChunk(c) {
     var line = h("div", "tr-line");
     line.dataset.chunk = c.chunk_id;
@@ -450,6 +646,7 @@
     var src = h("div", "tr-src");
     src.appendChild(h("span", "tr-at", fmtSeconds(c.t_audio_end)));
     src.appendChild(h("span", "tr-text", c.source));
+    src.appendChild(thumbs(c.chunk_id, "en", c.source));
     line.appendChild(src);
 
     var targets = h("div", "tr-targets");
@@ -473,6 +670,7 @@
         var lat = h("span", "tr-lat" + (t.latency_s > 5 ? " slow" : ""), t.latency_s.toFixed(2) + "s");
         row.appendChild(lat);
       }
+      if (t.text) row.appendChild(thumbs(c.chunk_id, code, t.text));
       targets.appendChild(row);
     });
     line.appendChild(targets);
@@ -488,6 +686,7 @@
         if (t.session_id && trSession && t.session_id !== trSession) {
           trReset();
           loadTranscriptSessions();   // a restart is a new session to offer
+          loadFeedback();             // and its own thumbs, none yet
         }
         trSession = t.session_id;
 
@@ -975,7 +1174,9 @@
       return;
     }
     data.rules.forEach(function (r) {
-      var card = h("div", "device-card");
+      // A rule switched off from the Learnings panel is still listed, faded:
+      // it exists, it is simply not firing, and deleting it here is allowed.
+      var card = h("div", "device-card" + (r.active === false ? " fb-item off" : ""));
       var row = h("div", "cx-rule");
       var wrong = h("span", "cx-wrong", r.wrong);
       var arrow = h("span", "muted", "→");
@@ -985,7 +1186,8 @@
       if (r.language !== "en") { wrong.dir = "auto"; right.dir = "auto"; }
       var where = h("span", "chip",
         (r.language === "en" ? "source" : r.language) +
-        (r.room ? " · " + r.room : " · every room"));
+        (r.room ? " · " + r.room : " · every room") +
+        (r.active === false ? " · off" : ""));
       row.appendChild(wrong); row.appendChild(arrow); row.appendChild(right);
       row.appendChild(where);
       var del = h("button", "small danger", "Delete");
@@ -1383,6 +1585,7 @@
   loadTranscript();
   loadTranscriptSessions();
   loadCorrections();
+  loadFeedback();
   watchSections();
   timer = setInterval(refreshStatus, 5000);
   // Faster than the status poll: a phrase the operator is reading along with
