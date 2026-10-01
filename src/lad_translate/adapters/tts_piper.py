@@ -57,6 +57,39 @@ DEFAULT_VOICES: dict[str, str] = {
 }
 
 
+def _stream(voice, text: str, length_scale: float):
+    """
+    Raw 16-bit PCM for one phrase, from whichever Piper is installed.
+
+    THE TWO PIPERS, AND WHY BOTH ARE HERE.
+
+    piper-tts up to 1.2.0 is MIT, from rhasspy/piper. From 1.5.0 the project
+    moved to OHF-voice/piper1-gpl and the licence became GPL-3.0-or-later.
+    GPL-3 obligations attach to DISTRIBUTION, so the shipped build pins the
+    MIT release - see the pin and its comment in pyproject.toml.
+
+    A developer's own machine is not distribution, which matters because the
+    MIT release has no arm64 macOS wheel: piper-phonemize 1.1.0 publishes
+    manylinux aarch64 and x86_64 and macOS x86_64, and nothing for Apple
+    silicon. Pinning it outright would make this repo uninstallable on the
+    machine most of it was written on.
+
+    So the adapter speaks both. The appliance ships MIT; a Mac can develop
+    against whichever build installs. The APIs differ only here:
+
+        MIT 1.2.0   voice.synthesize_stream_raw(text, length_scale=...) -> bytes
+        GPL 1.5.0+  voice.synthesize(text, SynthesisConfig(...))        -> chunks
+                    carrying .audio_int16_bytes
+    """
+    if hasattr(voice, "synthesize_stream_raw"):
+        yield from voice.synthesize_stream_raw(text, length_scale=length_scale)
+        return
+    from piper import SynthesisConfig
+
+    for piece in voice.synthesize(text, SynthesisConfig(length_scale=length_scale)):
+        yield piece.audio_int16_bytes
+
+
 class PiperTtsAdapter(TtsAdapter):
     """Synthesises one voice per target language, streaming chunks as they land."""
 
@@ -162,18 +195,15 @@ class PiperTtsAdapter(TtsAdapter):
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
         def produce() -> None:
-            from piper import SynthesisConfig
-
             # length_scale stretches duration, so it is the inverse of speed.
             # The pipeline raises speed when a language chain falls behind,
             # because translated speech runs longer than the source and the lag
             # compounds across a talk.
-            config = SynthesisConfig(
-                length_scale=1.0 / voice.speed if voice.speed > 0 else 1.0
-            )
+            length_scale = 1.0 / voice.speed if voice.speed > 0 else 1.0
+            engine = self._voices[voice.language]
             try:
-                for piece in self._voices[voice.language].synthesize(text, config):
-                    loop.call_soon_threadsafe(queue.put_nowait, piece.audio_int16_bytes)
+                for pcm in _stream(engine, text, length_scale):
+                    loop.call_soon_threadsafe(queue.put_nowait, pcm)
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 

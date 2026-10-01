@@ -43,23 +43,29 @@ def test_everything_else_routes_to_opus(language):
     assert route_for(language) == OPUS
 
 
-def test_arabic_routes_to_nllb():
+def test_arabic_routes_to_opus_because_nllb_cannot_be_sold():
     """
-    Opus-MT en->ar is unsafe on short input, which is all this chunker makes.
+    Arabic is on Opus-MT for a LICENCE reason, not a quality one.
 
-    Measured on the develop VM: "that the world has seen", 23 characters, came
-    back as 212 characters of Arabic - the word for "the afterlife" repeated
-    about 25 times. Longer inputs returned Quranic exegesis formatting over
-    Sherlock Holmes. NLLB gives 0.6-0.7x of the source length, and correct
-    text.
+    It went to NLLB at 9da1c79 because Opus-MT looped: "that the world has
+    seen", 23 characters, came back as 212 characters of Arabic - the word for
+    "the afterlife" repeated about 25 times - and ten times the text is ten
+    times the speech, which filled the playout queue and cost the next phrase.
+    NLLB translated it correctly.
 
-    This is pinned separately from the Indic cases because it was found much
-    later and for a different reason: Arabic was never in the original
-    comparison and was assumed safe by association. The blowup also spent the
-    day looking like a playout bug, since ten times the text is ten times the
-    speech.
+    NLLB-200 is licensed CC-BY-NC-4.0. A model that may not be used
+    commercially cannot ship in a product that is sold, whatever it scores, so
+    Arabic comes back here.
+
+    What makes that survivable is that the loop is now BOUNDED, not fixed: see
+    mt_opus.MIN_OUTPUT_TOKENS, which replaced a 32-token floor that defeated
+    the ratio on exactly the short phrases this chunker emits, and
+    trim_degenerate_repetition, which cuts a repeated run. The same input now
+    returns 16 characters instead of 212. It is still the weakest language
+    here and still sometimes reaches for religious register; it can no longer
+    flood playout.
     """
-    assert route_for("ar") == NLLB
+    assert route_for("ar") == OPUS
 
 
 def test_an_unlisted_language_defaults_to_opus():

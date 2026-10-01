@@ -70,7 +70,20 @@ DEFAULT_ROUTES: dict[str, str] = {
     # Measured failures. Both were bad enough to put in front of nobody.
     # Arabic: Opus-MT returns degenerate repetition and Quranic exegesis on
     # short input. See the module docstring for the measurement.
-    "ar": NLLB,
+    # Arabic went to NLLB at 9da1c79 because Opus-MT looped - 23 characters
+    # in, 212 out, the word for "the afterlife" repeated about 25 times. It
+    # comes back here because NLLB-200 is licensed CC-BY-NC-4.0 and this
+    # product is sold: a model that cannot be shipped is not an option,
+    # whatever it scores.
+    #
+    # The loop is now BOUNDED rather than fixed. mt_opus caps decoding at
+    # MIN_OUTPUT_TOKENS instead of the old 32-token floor that defeated the
+    # ratio on short phrases, and trims any run of a repeated word. Arabic on
+    # Opus-MT is still the weakest language here and still occasionally
+    # reaches for religious register under uncertainty; what it can no longer
+    # do is flood the playout queue and cost the NEXT phrase. Judge it by
+    # listening before a venue, not by the latency tiles.
+    "ar": OPUS,
     "hi": NLLB,
     "te": NLLB,
     # Served by the same en-dra family model as Telugu. Not individually

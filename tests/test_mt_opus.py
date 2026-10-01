@@ -233,3 +233,66 @@ def test_empty_and_single_word_input_is_safe(hindi):
     pair = hindi._pairs["hi"]
     assert pair._fix_leading_case("") == ""
     assert pair._fix_leading_case("   ") == "   "
+
+
+# --- bounding a decoder that loops -------------------------------------------
+#
+# Opus-MT en->ar loops on short input. The product cannot drop it, because
+# NLLB-200 is CC-BY-NC and this is sold, so the loop has to be survivable
+# instead of avoided. Two guards do that, and both are pure.
+
+
+def test_a_repeated_run_is_cut_and_one_copy_kept():
+    from lad_translate.adapters.mt_opus import trim_degenerate_repetition
+
+    out = trim_degenerate_repetition("the world world world world has ended")
+    assert out == "the world"
+
+
+def test_a_naturally_doubled_word_survives():
+    """
+    German really says it: "die die Welt gesehen hat" is what Opus-MT returns
+    for "that the world has seen", and it is correct. A guard that cut this
+    would be deleting real translation to remove an artefact.
+    """
+    from lad_translate.adapters.mt_opus import trim_degenerate_repetition
+
+    text = "die die Welt gesehen hat"
+    assert trim_degenerate_repetition(text) == text
+
+
+def test_ordinary_text_is_returned_unchanged():
+    from lad_translate.adapters.mt_opus import trim_degenerate_repetition
+
+    text = "toute émotion semblable à l'amour pour Irene Adler"
+    assert trim_degenerate_repetition(text) == text
+
+
+def test_the_arabic_loop_that_caused_this_is_cut():
+    """The real output, verbatim: 'the afterlife' repeated."""
+    from lad_translate.adapters.mt_opus import trim_degenerate_repetition
+
+    loop = "« الذي قد العالم " + " ".join(["الآخرة"] * 25)
+    out = trim_degenerate_repetition(loop)
+    assert out.count("الآخرة") == 1
+    assert len(out) < len(loop) / 4
+
+
+def test_a_short_text_cannot_be_trimmed_into_nothing():
+    from lad_translate.adapters.mt_opus import trim_degenerate_repetition
+
+    for text in ("", "oui", "oui oui", "a a a"):
+        assert isinstance(trim_degenerate_repetition(text), str)
+
+
+def test_the_decoding_floor_is_below_what_a_loop_needs():
+    """
+    The floor used to be 32 tokens. "that the world has seen" is six tokens,
+    so the 3.0 ratio allowed 18 - and max(32, 18) handed the decoder 32 to
+    fill, which is where the 212 characters came from. The floor has to sit
+    under the ratio for a short phrase, or it is not a bound at all.
+    """
+    from lad_translate.adapters.mt_opus import MIN_OUTPUT_TOKENS
+
+    six_token_phrase_allowance = int(6 * 3.0)
+    assert six_token_phrase_allowance > MIN_OUTPUT_TOKENS

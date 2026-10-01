@@ -72,3 +72,87 @@ async def test_unloaded_language_is_rejected(tts):
 def test_missing_voice_file_fails_with_a_usable_message():
     with pytest.raises(FileNotFoundError, match="fetch_tts_voices"):
         PiperTtsAdapter(["fr"], voice_root=Path("/nonexistent"))
+
+
+# --- speaking to both Pipers -------------------------------------------------
+#
+# piper-tts is MIT up to 1.2.0 and GPL-3.0-or-later from 1.5.0. The shipped
+# build pins MIT; a Mac developer cannot install it (no arm64 wheel) and runs
+# the later one. _stream is the only place the two differ, so it is tested
+# against fakes rather than against whichever happens to be installed.
+
+
+class _OldPiper:
+    """MIT 1.2.0: raw bytes straight out of synthesize_stream_raw."""
+
+    def __init__(self):
+        self.calls = []
+
+    def synthesize_stream_raw(self, text, length_scale=None, **kw):
+        self.calls.append((text, length_scale))
+        yield b"\x01\x02"
+        yield b"\x03\x04"
+
+
+class _NewChunk:
+    def __init__(self, pcm):
+        self.audio_int16_bytes = pcm
+
+
+class _NewPiper:
+    """GPL 1.5.0+: chunk objects carrying .audio_int16_bytes."""
+
+    def __init__(self):
+        self.calls = []
+
+    def synthesize(self, text, config):
+        self.calls.append((text, getattr(config, "length_scale", None)))
+        yield _NewChunk(b"\x01\x02")
+        yield _NewChunk(b"\x03\x04")
+
+
+def test_the_mit_api_yields_raw_pcm():
+    from lad_translate.adapters.tts_piper import _stream
+
+    v = _OldPiper()
+    assert list(_stream(v, "bonjour", 0.8)) == [b"\x01\x02", b"\x03\x04"]
+    assert v.calls == [("bonjour", 0.8)]
+
+
+def test_both_apis_produce_the_same_bytes():
+    """
+    The point of the shim: which Piper is installed must not change a single
+    sample reaching the room.
+    """
+    from lad_translate.adapters.tts_piper import _stream
+
+    old = list(_stream(_OldPiper(), "bonjour", 1.0))
+    try:
+        new = list(_stream(_NewPiper(), "bonjour", 1.0))
+    except ImportError:
+        pytest.skip("the GPL piper is not installed, so SynthesisConfig is absent")
+    assert old == new
+
+
+def test_the_mit_path_is_preferred_when_both_are_possible():
+    """
+    synthesize_stream_raw is checked first, so a build carrying both shapes
+    uses the MIT call and never imports SynthesisConfig.
+    """
+    from lad_translate.adapters.tts_piper import _stream
+
+    class Both(_OldPiper):
+        def synthesize(self, text, config):  # pragma: no cover - must not run
+            raise AssertionError("the GPL path was taken while the MIT one existed")
+
+    assert list(_stream(Both(), "x", 1.0)) == [b"\x01\x02", b"\x03\x04"]
+
+
+def test_speed_becomes_the_inverse_length_scale():
+    """Faster speech is a SHORTER length_scale; inverting it the wrong way
+    makes a lagging language lag further."""
+    from lad_translate.adapters.tts_piper import _stream
+
+    v = _OldPiper()
+    list(_stream(v, "x", 1.0 / 1.25))
+    assert v.calls[0][1] == pytest.approx(0.8)
