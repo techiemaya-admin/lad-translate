@@ -138,13 +138,74 @@ class _Pair:
         # "Bonjour Bonjour Bonjour, bienvenue, bienvenue, bienvenue..."
         # It is silent, it looks like a quality problem, and it is not.
         tokens = [*tokens, model.eos]
-        # Bound the output relative to the input. Belt and braces against
-        # runaway decoding on a malformed model.
-        max_len = max(32, int(len(tokens) * max_output_ratio))
+        # Bound the output relative to the input.
+        #
+        # The floor used to be 32, which quietly defeated the ratio on exactly
+        # the inputs that need it. A live chunker emits short phrases: "that
+        # the world has seen" is SIX tokens, so the ratio allows 18 - and
+        # max(32, 18) handed the decoder 32 tokens to fill. It filled them,
+        # with the Arabic word for "the afterlife" repeated about 25 times,
+        # 23 characters in and 212 out. Ten times the text is ten times the
+        # speech, which is what filled the playout queue and made the drift
+        # controller skip the following phrase. See MIN_OUTPUT_TOKENS.
+        max_len = max(MIN_OUTPUT_TOKENS, int(len(tokens) * max_output_ratio))
         result = model.translator.translate_batch(
             [tokens], beam_size=beam_size, max_decoding_length=max_len
         )
-        return model.sp_target.decode(result[0].hypotheses[0])
+        return trim_degenerate_repetition(
+            model.sp_target.decode(result[0].hypotheses[0])
+        )
+
+
+MIN_OUTPUT_TOKENS = 12
+"""
+Smallest decoding budget, however short the input.
+
+A floor is needed: a target language can need more tokens than the source for
+the same meaning, and three tokens for "Yes, absolutely" is not enough. But it
+has to stay below what a degenerate decoder can turn into audible nonsense.
+Twelve leaves room for a short sentence and bounds a runaway to roughly one
+breath rather than ten.
+"""
+
+MAX_REPEATS = 2
+"""
+How many times one word may repeat consecutively before the tail is cut.
+
+Natural speech doubles a word - "very, very" - and stops there. A word three
+times in a row is a decoder in a loop, not a speaker, and every further copy
+is speech an audience has to sit through. Measured on the Arabic that caused
+this: at 3 the loop survived the trim, at 2 it does not.
+"""
+
+
+def trim_degenerate_repetition(text: str, max_repeats: int = MAX_REPEATS) -> str:
+    """
+    Cut a translation at the point it starts repeating itself.
+
+    The length bound alone is not enough. It caps how MUCH nonsense is
+    produced; it cannot tell nonsense from a long sentence, and a phrase
+    truncated mid-loop still reaches the audience as a stutter. This keeps
+    everything up to the repetition and drops the loop, which turns a
+    degenerate output into a short one rather than a long wrong one.
+
+    Returns the text unchanged when nothing repeats, which is the normal case
+    for every language and model here.
+    """
+    words = text.split()
+    if len(words) <= max_repeats:
+        return text
+    run, previous = 1, None
+    for i, word in enumerate(words):
+        if word == previous:
+            run += 1
+            if run > max_repeats:
+                # Keep the first occurrence, drop the run and everything after:
+                # once a Marian decoder is looping it does not recover.
+                return " ".join(words[: i - max_repeats + 1]).strip()
+        else:
+            run, previous = 1, word
+    return text
 
 
 class OpusMtAdapter(MtAdapter):

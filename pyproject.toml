@@ -17,7 +17,17 @@ dependencies = [
 # --- CPU backends: viable on the 2014 Intel dev Mac -------------------------
 stt-cpu = ["faster-whisper>=1.1.0"]
 mt-cpu  = ["ctranslate2>=4.4", "sentencepiece>=0.2", "huggingface-hub>=0.26"]
-tts-cpu = ["piper-tts>=1.2"]
+# PINNED to the last MIT release. piper-tts moved to GPL-3.0-or-later at
+# 1.5.0 (rhasspy/piper -> OHF-voice/piper1-gpl), and GPL-3 obligations attach
+# to a work distributed with it - which rules it out of a commercially
+# licensed appliance. 1.2.0 is MIT and its API is handled in
+# adapters/tts_piper._stream.
+#
+# NOTE for Apple silicon: this pin does not install there. piper-phonemize
+# 1.1.0 ships manylinux aarch64/x86_64 and macOS x86_64 wheels and nothing for
+# arm64 macOS, so a Mac developer installs a later (GPL) piper instead; the
+# adapter works with either. A developer's own install is not distribution.
+tts-cpu = ["piper-tts==1.2.0"]
 
 # --- Streaming STT ----------------------------------------------------------
 # Measured at RTF 0.07 on 16 CPU cores, so the "gpu" label these carried was
