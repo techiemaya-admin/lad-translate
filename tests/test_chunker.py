@@ -98,3 +98,47 @@ def test_stability_lag_is_recorded_for_every_chunk():
     # With a clean appending backend, agreement costs about one interval.
     clause = [c for c in chunks if c.reason is CommitReason.CLAUSE]
     assert all(c.stability_lag <= HYPOTHESIS_INTERVAL * 3 for c in clause)
+
+
+# Medical test script, 2026-10-28: a timeout cut lands wherever the recogniser
+# happens to be, and "within four | and a half hours" came out in Arabic as
+# "half an hour" - a thrombolysis window.
+
+def test_a_timeout_does_not_cut_a_number_in_half():
+    config = ChunkerConfig(max_wait_s=1.0, max_hold_s=2.0, min_words=4, max_words=25)
+    stages = ["your blood pressure is one hundred"] * 10 + [
+        "your blood pressure is one hundred and eighty two over one hundred and eight today"
+    ] * 12
+    chunks = run(stream(stages, final=False), config)
+    assert chunks
+    assert not chunks[0].text.endswith("hundred")
+    assert "hundred and eighty" not in " | ".join(
+        f"{a.text.split()[-1]} {b.text.split()[0]}" for a, b in zip(chunks, chunks[1:])
+    )
+
+
+def test_a_timeout_does_not_strand_a_dangling_word():
+    config = ChunkerConfig(max_wait_s=1.0, max_hold_s=2.0, min_words=4, max_words=25)
+    stages = ["the result can be an acute"] * 10 + [
+        "the result can be an acute myocardial infarction what most people call it"
+    ] * 12
+    chunks = run(stream(stages, final=False), config)
+    assert chunks
+    assert all(c.text.split()[-1] not in ("an", "acute") for c in chunks)
+
+
+def test_a_number_at_the_frontier_is_released_once_the_hold_runs_out():
+    config = ChunkerConfig(max_wait_s=1.0, max_hold_s=2.0, min_words=4, max_words=25)
+    # Nothing after the number ever arrives: latency wins in the end.
+    stages = ["the dose was twenty"] * 40
+    chunks = run(stream(stages, final=False), config)
+    assert chunks and chunks[0].text == "the dose was twenty"
+    assert chunks[0].stability_lag >= config.max_hold_s
+
+
+def test_the_and_inside_a_number_is_not_a_clause_break():
+    from lad_translate.chunker.clause import find_boundary
+
+    tokens = ["the", "heart", "rate", "is", "one", "hundred", "and", "eighteen", "beats", "per", "minute"]
+    end, _ = find_boundary(tokens, min_words=4, allow_weak=True)
+    assert end == 0 or tokens[end - 1] != "hundred"

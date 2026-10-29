@@ -316,3 +316,59 @@ async def test_without_a_recorder_the_toggles_are_harmless():
     session, *_ = build()
     assert session.start_recording() is None
     assert session.stop_recording() is None
+
+
+# --- written form and glossary -----------------------------------------------
+
+
+class _ScriptedMt(FakeMt):
+    """Translates by table, carrying placeholders through like Opus-MT does."""
+
+    def __init__(self, drop_placeholders: bool = False) -> None:
+        super().__init__()
+        self.single: list[str] = []
+        self._drop = drop_placeholders
+
+    async def translate(self, text: str, source: str, target: str) -> str:
+        self.single.append(text)
+        if self._drop:
+            return f"[{target}] lost"
+        return f"[{target}] {text}"
+
+
+THROMBOLYSIS = [
+    "thrombolysis is effective within four and a half hours",
+    "thrombolysis is effective within four and a half hours.",
+]
+
+
+async def test_the_translator_receives_the_written_form():
+    session, _, _, mt, _ = build(stt=FakeStt(THROMBOLYSIS))
+    await session.run()
+    assert any("4.5 hours" in text for text in mt.calls)
+    assert not any("four and a half" in text for text in mt.calls)
+
+
+async def test_a_glossary_term_reaches_its_language_and_no_other():
+    from lad_translate.glossary import Glossary
+
+    mt = _ScriptedMt()
+    glossary = Glossary([("fr", "thrombolysis", "thrombolyse")])
+    session, _, _, _, tts = build(stt=FakeStt(THROMBOLYSIS), mt=mt, glossary=glossary)
+    await session.run()
+    assert any(text.startswith("T001") for text in mt.single), "the term was not protected"
+    assert any("thrombolyse" in text for text in tts.spoken["fr"])
+    # German has no entry, so it is translated as usual, in one call.
+    assert all("T001" not in text for text in tts.spoken["de"])
+
+
+async def test_a_lost_placeholder_falls_back_to_a_plain_translation():
+    from lad_translate.glossary import Glossary
+
+    mt = _ScriptedMt(drop_placeholders=True)
+    glossary = Glossary([("fr", "thrombolysis", "thrombolyse")])
+    session, _, _, _, tts = build(stt=FakeStt(THROMBOLYSIS), mt=mt, glossary=glossary)
+    await session.run()
+    spoken = " ".join(tts.spoken["fr"])
+    assert "T001" not in spoken
+    assert "thrombolysis" in " ".join(mt.single), "the fallback retranslates the original"

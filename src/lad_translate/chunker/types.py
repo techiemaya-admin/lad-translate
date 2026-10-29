@@ -93,6 +93,14 @@ class ChunkerConfig:
     lower it to cut lag.
     """
 
+    max_hold_s: float = 2.0
+    """
+    Longest a timed-out prefix may wait for a safe cut (see clause.safe_cut).
+
+    A cut that splits a number or strands "of" costs a mistranslation; waiting
+    costs latency. Past this, latency wins.
+    """
+
     silence_commit_s: float = 0.6
     """Flush pending text after this much audio with no new hypothesis."""
 
