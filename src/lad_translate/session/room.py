@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass
 
 from ..adapters.base import AudioFrame
@@ -114,6 +115,17 @@ session should shed and say so, not wedge one language for ever.
 """
 
 
+SOURCE_REJOIN_S = 15.0
+"""
+How long a speaker who left has to come back before the talk is over.
+
+A phone on venue wifi drops and rejoins. Ending at the first unpublish would
+end the session on every blip; waiting for ever is the bug this replaced, where
+the last phrase was never flushed. The cost of the wait is that the final
+phrase of a finished talk is translated this much later.
+"""
+
+
 @dataclass(slots=True)
 class LanguageTrack:
     language: str
@@ -146,10 +158,14 @@ class TranslationRoom:
         before the hall fills, and a session that dies because the desk was
         connected fifteen minutes late has failed for no good reason.
         """
+        self.source_rejoin_s = SOURCE_REJOIN_S
         self._room = None
         self._tracks: dict[str, LanguageTrack] = {}
         self._source_track = None
         self._source_ready = asyncio.Event()
+        self._source_gone = asyncio.Event()
+        """Set when the speaker's track goes away; see _end_source."""
+        self._closing_streams: set[asyncio.Future] = set()
         self._closing = False
         """Set before a deliberate disconnect, so shutdown is not reported as a fault."""
 
@@ -177,11 +193,24 @@ class TranslationRoom:
                 publication.set_subscribed(False)
                 return
             self._source_track = track
+            self._source_gone.clear()
             self._source_ready.set()
             log.info(
                 "source track subscribed",
                 extra={"track_name": publication.name, "participant": participant.identity},
             )
+
+        # Both, because which one fires first when a speaker leaves depends on
+        # whether they unpublished or simply dropped. _end_source is idempotent.
+        @self._room.on("track_unsubscribed")
+        def _on_unsubscribed(track, publication, participant):
+            if publication.name == SOURCE_TRACK_NAME:
+                self._end_source(participant.identity)
+
+        @self._room.on("track_unpublished")
+        def _on_unpublished(publication, participant):
+            if publication.name == SOURCE_TRACK_NAME:
+                self._end_source(participant.identity)
 
         @self._room.on("disconnected")
         def _on_disconnected(reason):
@@ -256,30 +285,90 @@ class TranslationRoom:
                 f"{timeout_s}s; is the venue publisher connected?"
             ) from exc
 
-    async def source_frames(self) -> AsyncIterator[AudioFrame]:
-        """
-        Stream the speaker's audio.
+    def _end_source(self, participant: str) -> None:
+        """The speaker's track went away: unpublished, or the speaker left."""
+        if self._source_gone.is_set():
+            return
+        self._source_gone.set()
+        self._source_ready.clear()
+        self._source_track = None
+        log.info("source track ended", extra={"participant": participant})
 
-        t_audio accumulates from the frames themselves rather than from the
-        clock, so it stays correct if this process is briefly descheduled.
-        """
+    def _open_stream(self, track):
         from livekit import rtc
 
+        return rtc.AudioStream.from_track(track=track)
+
+    async def source_frames(self) -> AsyncIterator[AudioFrame]:
+        """
+        Stream the speaker's audio, until the speaker has gone for good.
+
+        t_audio accumulates from the frames themselves rather than from the
+        clock, so it stays correct if this process is briefly descheduled. It
+        also carries on across a rejoin, so the second half of a talk does not
+        restart at zero and collide with the first half's positions.
+        """
         await self.wait_for_source(self.source_timeout_s)
-        stream = rtc.AudioStream.from_track(track=self._source_track)
         t_audio = 0.0
+        while True:
+            stream = self._open_stream(self._source_track)
+            try:
+                async for event in self._until_source_gone(stream):
+                    frame = event.frame
+                    yield AudioFrame(
+                        pcm=bytes(frame.data),
+                        sample_rate=frame.sample_rate,
+                        t_audio=t_audio,
+                        t_wall=time.monotonic(),
+                    )
+                    t_audio += frame.samples_per_channel / frame.sample_rate
+            finally:
+                # Not awaited: aclose() waits for the same end-of-stream event
+                # that never came, and would hang exactly where this is needed.
+                closing = asyncio.ensure_future(stream.aclose())
+                self._closing_streams.add(closing)
+                closing.add_done_callback(self._closing_streams.discard)
+            # A stream that ended on its own ended its track too. Without this
+            # the ready flag is still up and the loop reopens the dead track.
+            self._end_source("stream ended")
+
+            try:
+                await self.wait_for_source(self.source_rejoin_s)
+            except TimeoutError:
+                log.info("source gone; ending the stream", extra={"room": self.room_name})
+                return
+            log.info("source rejoined", extra={"room": self.room_name, "t_audio": round(t_audio, 2)})
+
+    async def _until_source_gone(self, stream) -> AsyncIterator[object]:
+        """
+        Yield the stream's events until it ends OR the source track goes away.
+
+        The stream alone is not enough. livekit-rtc ends an AudioStream only on
+        an end-of-stream event from the native side, and when the speaker
+        leaves that event did not arrive: the iterator blocked for ever, so the
+        chunker was never flushed and the last phrase of the talk was never
+        translated. Measured on the medical script, 2026-10-28: the closing 15
+        words were lost and the session sat live for minutes after the speaker
+        left, until it was killed.
+        """
+        frames = stream.__aiter__()
+        gone = asyncio.ensure_future(self._source_gone.wait())
         try:
-            async for event in stream:
-                frame = event.frame
-                yield AudioFrame(
-                    pcm=bytes(frame.data),
-                    sample_rate=frame.sample_rate,
-                    t_audio=t_audio,
-                    t_wall=time.monotonic(),
-                )
-                t_audio += frame.samples_per_channel / frame.sample_rate
+            while True:
+                nxt = asyncio.ensure_future(frames.__anext__())
+                await asyncio.wait({nxt, gone}, return_when=asyncio.FIRST_COMPLETED)
+                if not nxt.done():
+                    nxt.cancel()
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await nxt
+                    return
+                try:
+                    event = nxt.result()
+                except StopAsyncIteration:
+                    return
+                yield event
         finally:
-            await stream.aclose()
+            gone.cancel()
 
     # -------------------------------------------------------------------------
     # Language tracks
