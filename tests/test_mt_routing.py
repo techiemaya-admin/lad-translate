@@ -160,3 +160,59 @@ async def test_a_failing_backend_does_not_silence_the_other(routed):
 async def test_unsupported_target_is_dropped(routed):
     out = await routed.translate_many("hello.", "en", ["fr", "xx"])
     assert "xx" not in out
+
+
+# --- which directory and which token a language gets --------------------------
+#
+# Pure, so these run without any model present - unlike tests/test_mt_opus.py,
+# whose module-level skipif skips every test in it when en-fr is absent.
+
+
+def _resolver(model_root):
+    """An adapter with only what _resolve reads. Construction proper loads
+    models and needs at least one target, neither of which this is about."""
+    from lad_translate.adapters.mt_opus import OpusMtAdapter
+
+    adapter = OpusMtAdapter.__new__(OpusMtAdapter)
+    adapter.model_root = model_root
+    adapter.source_language = "en"
+    return adapter
+
+
+def _pair(root, name):
+    (root / name).mkdir()
+    (root / name / "model.bin").write_bytes(b"")
+
+
+def test_arabic_pair_model_is_given_its_target_token(tmp_path):
+    """
+    eng-ara is one model over several Arabic varieties and its README requires
+    a sentence-initial >>id<<. The pair directory exists, so before this the
+    resolver returned (en-ar, None) and never read MULTILINGUAL - an "ar" entry
+    there would have been a silent no-op.
+    """
+    _pair(tmp_path, "en-ar")
+    directory, token = _resolver(tmp_path)._resolve("ar")
+    assert directory == tmp_path / "en-ar"
+    assert token == ">>ara<<"
+
+
+def test_a_family_token_never_attaches_to_a_pair_model(tmp_path):
+    """en-ta beats en-dra, and >>tam<< means nothing to a one-pair model."""
+    _pair(tmp_path, "en-ta")
+    _pair(tmp_path, "en-dra")
+    directory, token = _resolver(tmp_path)._resolve("ta")
+    assert directory == tmp_path / "en-ta"
+    assert token is None
+
+
+def test_a_family_model_is_used_with_its_token_when_no_pair_exists(tmp_path):
+    _pair(tmp_path, "en-dra")
+    directory, token = _resolver(tmp_path)._resolve("te")
+    assert directory == tmp_path / "en-dra"
+    assert token == ">>tel<<"
+
+
+def test_a_language_with_no_entry_gets_no_token(tmp_path):
+    _pair(tmp_path, "en-fr")
+    assert _resolver(tmp_path)._resolve("fr") == (tmp_path / "en-fr", None)
