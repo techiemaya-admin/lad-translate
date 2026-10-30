@@ -42,6 +42,25 @@ MULTILINGUAL: dict[str, tuple[str, str]] = {
     "ta": ("en-dra", ">>tam<<"),
     "ml": ("en-dra", ">>mal<<"),
     "kn": ("en-dra", ">>kan<<"),
+    # Arabic has a pair directory of its own and STILL needs a token. Helsinki
+    # publishes eng-ara as one model over several Arabic varieties - the
+    # original 2020 release lists ara, ara_Latn, arq, arq_Latn and arz among
+    # them - and its README says a sentence-initial >>id<< is required. This
+    # repo never sent one, so every Arabic phrase was decoded with the variety
+    # left to chance.
+    #
+    # Measured on the original release (opus-2020-06-18), "that the world has
+    # seen": 3.3x the source length with no token, looping on the word for
+    # "the world"; 1.7x with >>ara<<. The token is not cosmetic. It does not
+    # make that release good - the exegesis register (quote marks around a
+    # gloss, "أي", "meaning") survives it - which is why en-ar is the tc-big
+    # release, where the token makes no difference to these phrases but is
+    # still what the model card requires.
+    #
+    # >>ara<< is Modern Standard Arabic, which is what conference
+    # interpretation is delivered in. tc-big's only other label is >>afb<<,
+    # Gulf Arabic.
+    "ar": ("en-ar", ">>ara<<"),
 }
 """target language code -> (model directory, sentence-initial token)"""
 
@@ -250,10 +269,19 @@ class OpusMtAdapter(MtAdapter):
         its capacity four ways.
         """
         direct = self.model_root / f"{self.source_language}-{target}"
+        family = MULTILINGUAL.get(target)
         if (direct / "model.bin").exists():
-            return direct, None
-        if target in MULTILINGUAL:
-            directory, token = MULTILINGUAL[target]
+            # A pair directory can still be a multi-target model, so an entry
+            # naming THIS directory supplies its token. Returning None here
+            # unconditionally made an "ar" entry a silent no-op: the pair
+            # model always existed, so the table was never read.
+            #
+            # An entry naming a FAMILY directory does not apply - en-ta beats
+            # en-dra, and >>tam<< means nothing to a model trained on one pair.
+            token = family[1] if family and family[0] == direct.name else None
+            return direct, token
+        if family:
+            directory, token = family
             return self.model_root / directory, token
         return direct, None
 
