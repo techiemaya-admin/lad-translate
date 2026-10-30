@@ -19,7 +19,7 @@ tools/chunker_replay.py.
 from __future__ import annotations
 
 from ..adapters.base import Hypothesis
-from .clause import find_boundary
+from .clause import find_boundary, safe_cut
 from .stability import StabilityTracker
 from .types import ChunkerConfig, CommitReason, PhraseChunk
 
@@ -82,9 +82,11 @@ class PhraseChunker:
         cfg = self.config
         tokens = prefix.tokens
 
-        # Hard ceiling. The speaker is not pausing and we cannot hold longer.
+        # Hard ceiling. The speaker is not pausing and we cannot hold longer -
+        # but the cut can still step back off a number or a dangling "of".
         if len(tokens) >= cfg.max_words:
-            return [self._commit(hyp, prefix, cfg.max_words, CommitReason.MAX_WORDS)]
+            take = safe_cut(tokens, cfg.max_words, cfg.min_words) or cfg.max_words
+            return [self._commit(hyp, prefix, take, CommitReason.MAX_WORDS)]
 
         # Weak boundaries only become acceptable near the ceiling, because
         # cutting before a conjunction costs translation quality.
@@ -96,9 +98,17 @@ class PhraseChunker:
             return [self._commit(hyp, prefix, end, CommitReason.CLAUSE)]
 
         # Stable but no boundary in sight. Hold, up to the latency ceiling.
+        # The newest word is wherever the recogniser happens to be, so a
+        # timeout cut lands mid-number or after "of" as often as not. Step back
+        # to a safe word; if there is none yet, wait - up to max_hold_s, past
+        # which latency wins and the phrase goes out as it is.
         lag = hyp.t_wall - prefix.first_seen_wall
         if lag >= cfg.max_wait_s and len(tokens) >= cfg.min_words:
-            return [self._commit(hyp, prefix, len(tokens), CommitReason.STABILITY_TIMEOUT)]
+            take = safe_cut(tokens, len(tokens), cfg.min_words)
+            if take == 0 and lag >= cfg.max_hold_s:
+                take = len(tokens)
+            if take:
+                return [self._commit(hyp, prefix, take, CommitReason.STABILITY_TIMEOUT)]
 
         return []
 

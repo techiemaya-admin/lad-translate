@@ -1,0 +1,203 @@
+# Medical English -> Arabic glossary (Modern Standard Arabic clinical usage).
+#
+# Loaded with serve_session.py --glossary glossaries/medical.tsv. Each term is
+# lifted out before translation and put back after; see src/lad_translate/glossary.py.
+#
+# Acronyms map to their Arabic clinical names rather than staying in Latin:
+# the Arabic voice reads Latin letters as noise ("HbA1c" came back as
+# "habai wahid"). Drug names are transliterated for the same reason.
+#
+# NOT YET REVIEWED by an Arabic-speaking clinician. Several entries overlap the
+# answer key in the Medical Translation Test Script, so glossary hits on that
+# script are no longer an independent score.
+ar	thrombolysis	إذابة الخثرة
+ar	mechanical thrombectomy	استئصال الخثرة الميكانيكي
+ar	thrombectomy	استئصال الخثرة
+ar	thrombus	خثرة
+ar	metastasis	النقيلة
+ar	distant metastasis	النقائل البعيدة
+ar	metastatic melanoma	الورم الميلانيني النقيلي
+ar	melanoma	الورم الميلانيني
+ar	slurred speech	تلعثم في الكلام
+ar	admitted	أُدخل المستشفى
+ar	myocardial infarction	احتشاء عضلة القلب
+ar	infarction	احتشاء
+ar	myocardium	عضلة القلب
+ar	atherosclerosis	تصلب الشرايين العصيدي
+ar	coronary artery disease	مرض الشريان التاجي
+ar	hypertension	ارتفاع ضغط الدم
+ar	hypotension	انخفاض ضغط الدم
+ar	type 2 diabetes mellitus	داء السكري من النوع الثاني
+ar	type 2 diabetes	السكري من النوع الثاني
+ar	diabetes mellitus	داء السكري
+ar	silent ischaemia	نقص التروية الصامت
+ar	silent ischemia	نقص التروية الصامت
+ar	ischaemia	نقص التروية
+ar	ischemia	نقص التروية
+ar	diaphoresis	تعرّق غزير
+ar	dyslipidaemia	اضطراب شحوم الدم
+ar	dyslipidemia	اضطراب شحوم الدم
+ar	insulin resistance	مقاومة الإنسولين
+ar	metabolic syndrome	المتلازمة الأيضية
+ar	triglycerides	الدهون الثلاثية
+ar	antiplatelet agents	مضادات الصفيحات
+ar	beta-blockers	حاصرات بيتا
+ar	beta blockers	حاصرات بيتا
+ar	ACE inhibitors	مثبطات الإنزيم المحول للأنجيوتنسين
+ar	SGLT2 inhibitors	مثبطات ناقل الصوديوم والجلوكوز 2
+ar	SGLT inhibitors	مثبطات ناقل الصوديوم والجلوكوز 2
+ar	statins	الستاتينات
+ar	stenosis	تضيّق
+ar	coronary angiography	تصوير الأوعية التاجية
+ar	percutaneous coronary intervention	التدخل التاجي عبر الجلد
+ar	stent placement	تركيب دعامة
+ar	stent	دعامة
+ar	coronary artery bypass grafting	جراحة المجازة التاجية
+ar	multivessel disease	مرض متعدد الأوعية
+ar	heart failure	قصور القلب
+ar	preserved ejection fraction	الكسر القذفي المحفوظ
+ar	ejection fraction	الكسر القذفي
+ar	retrosternal	خلف القص
+ar	epigastric	شرسوفي
+ar	fundoscopy	تنظير قاع العين
+ar	retinal vessels	أوعية الشبكية
+ar	fasting blood glucose	سكر الدم الصائم
+ar	lipid profile	تحليل الدهون
+ar	kidney function tests	اختبارات وظائف الكلى
+ar	creatinine clearance	تصفية الكرياتينين
+ar	creatinine	الكرياتينين
+ar	microalbuminuria	بيلة الألبومين الزهيدة
+ar	echocardiogram	تخطيط صدى القلب
+ar	ECG	تخطيط كهربية القلب
+ar	EKG	تخطيط كهربية القلب
+ar	HbA1c	الهيموغلوبين السكري التراكمي
+ar	eGFR	معدل الترشيح الكبيبي
+ar	CRP	البروتين التفاعلي سي
+ar	MRSA	المكورات العنقودية الذهبية المقاومة للميثيسيلين
+ar	COPD	مرض الانسداد الرئوي المزمن
+ar	LDL cholesterol	الكوليسترول منخفض الكثافة
+ar	HDL cholesterol	الكوليسترول مرتفع الكثافة
+ar	LDL	الكوليسترول منخفض الكثافة
+ar	HDL	الكوليسترول مرتفع الكثافة
+ar	MRI	التصوير بالرنين المغناطيسي
+ar	CT scan	التصوير المقطعي
+ar	low-dose CT	التصوير المقطعي منخفض الجرعة
+ar	CT	التصوير المقطعي
+ar	HER2	مستقبل هير 2
+ar	PRN	عند اللزوم
+ar	IV	وريدي
+ar	antihypertensive	خافض لضغط الدم
+ar	amlodipine	أملوديبين
+ar	apixaban	أبيكسابان
+ar	clopidogrel	كلوبيدوغريل
+ar	alteplase	ألتيبلاز
+ar	co-amoxiclav	كو-أموكسيكلاف
+ar	co amoxiclav	كو-أموكسيكلاف
+ar	clarithromycin	كلاريثروميسين
+ar	paracetamol	باراسيتامول
+ar	penicillin	البنسلين
+ar	opioid	مسكن أفيوني
+ar	community-acquired pneumonia	الالتهاب الرئوي المكتسب من المجتمع
+ar	community acquired pneumonia	الالتهاب الرئوي المكتسب من المجتمع
+ar	right lower lobe	الفص السفلي الأيمن
+ar	lower lobe	الفص السفلي
+ar	atrial fibrillation	الرجفان الأذيني
+ar	chronic kidney disease	مرض الكلى المزمن
+ar	afebrile	غير محموم
+ar	febrile	محموم
+ar	tachycardic	مصاب بتسرع القلب
+ar	tachycardia	تسرّع القلب
+ar	respiratory rate	معدل التنفس
+ar	oxygen saturation	تشبع الأكسجين
+ar	room air	هواء الغرفة
+ar	consolidation	تكثّف رئوي
+ar	pleural effusion	انصباب جنبي
+ar	white cell count	عدد كريات الدم البيضاء
+ar	procalcitonin	البروكالسيتونين
+ar	blood cultures	مزارع الدم
+ar	streptococcus pneumoniae	المكورات العقدية الرئوية
+ar	haemodynamically stable	مستقر ديناميكياً دموياً
+ar	hemodynamically stable	مستقر ديناميكياً دموياً
+ar	nasal cannula	قنية أنفية
+ar	lactate	اللاكتات
+ar	chest physiotherapy	العلاج الطبيعي للصدر
+ar	renal function	وظائف الكلى
+ar	post-op	بعد العملية
+ar	post op	بعد العملية
+ar	laparoscopic cholecystectomy	استئصال المرارة بالمنظار
+ar	cholecystectomy	استئصال المرارة
+ar	acute cholecystitis	التهاب المرارة الحاد
+ar	cholecystitis	التهاب المرارة
+ar	gallstones	حصوات المرارة
+ar	liver function tests	اختبارات وظائف الكبد
+ar	outpatient follow-up	المتابعة في العيادات الخارجية
+ar	outpatient follow up	المتابعة في العيادات الخارجية
+ar	diabetic ketoacidosis	الحماض الكيتوني السكري
+ar	urinary tract infection	التهاب المسالك البولية
+ar	millimoles per litre	ملي مول لكل لتر
+ar	millimoles per liter	ملي مول لكل لتر
+ar	bicarbonate	البيكربونات
+ar	ketonaemia	كيتونات الدم
+ar	ketonemia	كيتونات الدم
+ar	intravenous insulin infusion	تسريب الإنسولين الوريدي
+ar	intravenous	وريدي
+ar	potassium replacement	تعويض البوتاسيوم
+ar	anion gap	فجوة الأنيون
+ar	subcutaneous	تحت الجلد
+ar	basal-bolus insulin	الإنسولين القاعدي والوجبات
+ar	basal bolus insulin	الإنسولين القاعدي والوجبات
+ar	diabetes specialist nurse	ممرضة متخصصة في السكري
+ar	hypokalaemia	نقص بوتاسيوم الدم
+ar	hypokalemia	نقص بوتاسيوم الدم
+ar	oncology	علم الأورام
+ar	oncologist	طبيب أورام
+ar	precision medicine	الطب الدقيق
+ar	hormone receptors	مستقبلات الهرمونات
+ar	genomic profiling	التنميط الجيني
+ar	immune checkpoint inhibitors	مثبطات نقاط التفتيش المناعية
+ar	immunotherapy	العلاج المناعي
+ar	non-small cell lung cancer	سرطان الرئة غير صغير الخلايا
+ar	non small cell lung cancer	سرطان الرئة غير صغير الخلايا
+ar	immune-related adverse events	الآثار الجانبية المرتبطة بالمناعة
+ar	immune related adverse events	الآثار الجانبية المرتبطة بالمناعة
+ar	colitis	التهاب القولون
+ar	pneumonitis	التهاب الرئة
+ar	thyroiditis	التهاب الغدة الدرقية
+ar	mammography	التصوير الشعاعي للثدي
+ar	colonoscopy	تنظير القولون
+ar	colorectal cancer	سرطان القولون والمستقيم
+ar	malignancy	ورم خبيث
+ar	lymph node involvement	إصابة العقد اللمفاوية
+ar	biopsy	خزعة
+ar	histopathology	علم الأمراض النسيجي
+ar	neurology	طب الأعصاب
+ar	neurologist	طبيب أعصاب
+ar	ischaemic stroke	السكتة الدماغية الإقفارية
+ar	ischemic stroke	السكتة الدماغية الإقفارية
+ar	haemorrhagic stroke	السكتة الدماغية النزفية
+ar	hemorrhagic stroke	السكتة الدماغية النزفية
+ar	large vessel occlusions	انسداد الأوعية الكبيرة
+ar	symptom onset	بداية الأعراض
+ar	early-onset dementia	الخرف المبكر
+ar	early onset dementia	الخرف المبكر
+ar	dementia	الخرف
+ar	Parkinson's disease	مرض باركنسون
+ar	multiple sclerosis	التصلب المتعدد
+ar	epilepsy	الصرع
+ar	seizure-free	خالين من النوبات
+ar	seizure free	خالين من النوبات
+ar	anticonvulsant	مضاد الاختلاج
+ar	infectious disease	الأمراض المعدية
+ar	antimicrobial resistance	مقاومة مضادات الميكروبات
+ar	broad-spectrum antibiotics	المضادات الحيوية واسعة الطيف
+ar	broad spectrum antibiotics	المضادات الحيوية واسعة الطيف
+ar	carbapenem-resistant Enterobacteriaceae	الأمعائيات المقاومة للكاربابينيم
+ar	carbapenem resistant Enterobacteriaceae	الأمعائيات المقاومة للكاربابينيم
+ar	antimicrobial stewardship	ترشيد استخدام مضادات الميكروبات
+ar	infection prevention	الوقاية من العدوى
+ar	hand hygiene	نظافة اليدين
+ar	hepatitis B	التهاب الكبد ب
+ar	pneumococcal disease	مرض المكورات الرئوية
+ar	tuberculosis	السل
+ar	dengue fever	حمى الضنك
+ar	active surveillance	الترصد النشط

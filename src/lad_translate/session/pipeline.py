@@ -28,8 +28,10 @@ from ..chunker import PhraseChunk, PhraseChunker
 from ..config import SessionConfig
 from ..db.corrections import CorrectionStore
 from ..db.sessions import SessionStore, TranscriptRow
+from ..glossary import Glossary
 from ..obs.latency import LatencyRecorder, Stage
 from ..obs.log import get_logger
+from ..text_norm import spoken_to_written
 from .backpressure import BacklogGuard, guarded
 from .drift import DriftController, DriftPolicy
 from .recording import RecordingSink
@@ -155,6 +157,7 @@ class TranslationSession:
         sink: AudioSink | None = None,
         recorder: RecordingSink | None = None,
         corrections: CorrectionStore | None = None,
+        glossary: Glossary | None = None,
     ) -> None:
         self.config = config
         self.room = room
@@ -174,6 +177,8 @@ class TranslationSession:
         cost the audience the audio in flight.
         """
         self._corrections = corrections_module.EMPTY
+        self.glossary = glossary
+        """A domain glossary forced through translation; see glossary.py."""
         # The recorder is also a sink - the caller puts it in the fan-out so
         # it receives every phrase - and it is held here as well because two
         # things reach it that a sink cannot see: the source audio, tapped
@@ -305,6 +310,34 @@ class TranslationSession:
         for chunk in self.chunker.flush():
             await self._dispatch(chunk)
 
+    async def _translate(self, chunk: PhraseChunk, source: str, targets: list[str]) -> dict[str, str]:
+        """
+        translate_many, except that a language with glossary terms in this
+        phrase is translated on its own with the terms protected.
+        """
+        protected = {}
+        if self.glossary is not None:
+            for language in targets:
+                found = self.glossary.protect(chunk.text, language)
+                if found is not None:
+                    protected[language] = found
+        plain = [language for language in targets if language not in protected]
+        translations = await self.mt.translate_many(chunk.text, source, plain) if plain else {}
+
+        async def one(language: str) -> tuple[str, str]:
+            found = protected[language]
+            out = Glossary.restore(await self.mt.translate(found.text, source, language), found)
+            if out is None:
+                # The translator dropped or invented a placeholder. A phrase
+                # without the glossary beats one with a hole in it.
+                log.warning("glossary placeholder lost; translating without it",
+                            extra={"chunk_id": chunk.chunk_id, "lang": language})
+                out = await self.mt.translate(chunk.text, source, language)
+            return language, out
+
+        translations.update(dict(await asyncio.gather(*(one(lang) for lang in protected))))
+        return translations
+
     async def _anchor_clock(self, frames):
         """
         Anchor the audio clock to the FIRST AUDIO FRAME, not to session start.
@@ -377,12 +410,18 @@ class TranslationSession:
         # rather than once per language is the whole reason a source rule is
         # worth more than a target one: a misheard name is fixed once.
         source = self.config.source_language
+        if source == "en":
+            # Digits and acronyms before anything else, so corrections and the
+            # glossary are written against one form. See text_norm.py.
+            written = spoken_to_written(chunk.text)
+            if written != chunk.text:
+                chunk = dataclasses.replace(chunk, text=written)
         corrected, hits = self._corrections.apply(chunk.text, source)
         if hits:
             chunk = dataclasses.replace(chunk, text=corrected)
             log.info("source corrected", extra={"chunk_id": chunk.chunk_id, "words": hits})
 
-        translations = await self.mt.translate_many(chunk.text, source, targets)
+        translations = await self._translate(chunk, source, targets)
         now = time.monotonic()
         for language, text in translations.items():
             # And per language, for when the source was right and one target

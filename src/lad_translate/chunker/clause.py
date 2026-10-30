@@ -128,8 +128,78 @@ def find_boundary(
 
     # Weak boundaries sit BEFORE a conjunction, so the conjunction opens the
     # next chunk rather than dangling at the end of this one.
+    # The "and" in "one hundred and eighty two" is not a clause break.
     for i in range(len(tokens) - 1, min_words - 1, -1):
-        if is_conjunction(tokens[i]):
+        if is_conjunction(tokens[i]) and is_safe_cut(tokens, i):
             return i, BoundaryStrength.WEAK
 
     return 0, BoundaryStrength.NONE
+
+
+# Words that cannot end a phrase: the thing they introduce is in the next one.
+# Measured on the medical script, 2026-10-28: "an acute myocardial | infarction",
+# "within four | and a half hours", "one point | two grams". Each half was
+# translated alone, and the Arabic for the second read "half an hour" - a
+# thrombolysis window - and "gram twice three times daily" - a dose.
+_DANGLING = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "nor",
+        "of", "to", "in", "on", "at", "by", "for", "with", "from", "into", "onto",
+        "as", "than", "via", "per", "over", "under", "between", "about",
+        "is", "are", "was", "were", "be", "been", "am",
+        "my", "your", "our", "their", "its",
+        "very", "more", "most", "less", "acute", "chronic",
+    }
+)
+
+_NUMBER_WORDS = frozenset(
+    {
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty", "fifty",
+        "sixty", "seventy", "eighty", "ninety", "hundred", "thousand", "million",
+        "point", "half", "quarter",
+    }
+)
+
+
+def _is_number(token: str) -> bool:
+    word = normalise_token(token)
+    return word in _NUMBER_WORDS or bool(_HAS_DIGIT.search(word))
+
+
+def is_safe_cut(tokens: list[str], end: int) -> bool:
+    """
+    Whether cutting after tokens[end - 1] keeps a number and a phrase whole.
+
+    `end` may equal len(tokens): the newest word is the recogniser's frontier,
+    and a number there may still be growing ("one hundred" before "and eighty
+    two" arrives), so it is not safe either.
+    """
+    if end <= 0:
+        return False
+    if token_boundary_strength(tokens[end - 1]) >= BoundaryStrength.MEDIUM:
+        return True
+    last = normalise_token(tokens[end - 1])
+    if last in _DANGLING:
+        return False
+    if _is_number(tokens[end - 1]):
+        if end == len(tokens):
+            return False
+        nxt = normalise_token(tokens[end])
+        # "182 | over 108" and "24 | to 48 hours" are one quantity each.
+        if _is_number(tokens[end]) or nxt in ("and", "point", "to", "over", "by", "x"):
+            return False
+    return True
+
+
+def safe_cut(tokens: list[str], end: int, min_words: int) -> int:
+    """
+    The latest cut at or before `end` that is_safe_cut allows, or 0 if none
+    leaves at least min_words. A caller that gets 0 should wait for more words,
+    up to its own ceiling.
+    """
+    for i in range(end, min_words - 1, -1):
+        if is_safe_cut(tokens, i):
+            return i
+    return 0

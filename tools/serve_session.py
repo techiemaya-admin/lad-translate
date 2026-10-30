@@ -38,6 +38,7 @@ from lad_translate.config import (
 from lad_translate.db.corrections import CorrectionStore
 from lad_translate.db.pool import control_schema
 from lad_translate.db.sessions import SessionStore
+from lad_translate.glossary import Glossary
 from lad_translate.obs.log import configure, get_logger
 from lad_translate.session.pipeline import TranslationSession
 from lad_translate.session.recording import RecordingSink
@@ -106,6 +107,8 @@ async def main() -> int:
                     help="where recordings go; without it the session cannot record at all")
     ap.add_argument("--record", action="store_true",
                     help="start recording as soon as the session starts (needs --record-dir)")
+    ap.add_argument("--glossary", type=Path, default=None,
+                    help="domain glossary forced through translation, e.g. glossaries/medical.tsv")
     ap.add_argument("--wait", type=float, default=900.0,
                     help="seconds to wait for a speaker before giving up")
     args = ap.parse_args()
@@ -193,6 +196,7 @@ async def main() -> int:
             # Operator corrections, reloaded while the session runs, so a name
             # fixed in the console reaches this talk rather than the next one.
             corrections=CorrectionStore(pool, config.tenant) if store is not None else None,
+            glossary=Glossary.load(args.glossary) if args.glossary else None,
         )
         if recorder is not None:
             loop = asyncio.get_running_loop()
